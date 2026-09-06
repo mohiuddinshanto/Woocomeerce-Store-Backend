@@ -1,0 +1,235 @@
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  ADMIN
+  STAFF
+  CUSTOMER
+}
+
+enum StaffType {
+  ORDER_MANAGER
+  PRODUCT_MANAGER
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PACKED
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  RETURNED
+}
+
+enum PaymentStatus {
+  UNPAID
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum DiscountType {
+  PERCENTAGE
+  FLAT
+}
+
+model User {
+  id String @id @default(uuid())
+  name String
+  email String @unique
+  emailVerified Boolean @default(false)
+  image String?
+  phone String?
+  passwordHash String
+  role Role @default(CUSTOMER)
+  staffType StaffType?
+  allowedCategories Json?
+  sessions Session[]
+  accounts Account[]
+  addresses Address[]
+  orders Order[] @relation("CustomerOrders")
+  reviews Review[]
+  wishlist Wishlist[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Session {
+  id String @id @default(uuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token String @unique
+  expiresAt DateTime
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Account {
+  id String @id @default(uuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accountId String
+  providerId String
+  accessToken String? @db.Text
+  refreshToken String? @db.Text
+  idToken String? @db.Text
+  accessTokenExpiresAt DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope String?
+  password String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Verification {
+  id String @id @default(uuid())
+  identifier String
+  value String
+  expiresAt DateTime
+  createdAt DateTime? @default(now())
+  updatedAt DateTime? @updatedAt
+}
+
+model Address {
+  id String @id @default(uuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  label String?
+  name String
+  phone String
+  addressLine String
+  district String
+  division String
+  isDefault Boolean @default(false)
+  createdAt DateTime @default(now())
+}
+
+model StoreConfig {
+  id String @id
+  storeName String
+  logoUrl String?
+  isOnboarded Boolean @default(false)
+  marketingPixels Json?
+  chatConfig Json?
+  themeSettings Json?
+  featureFlags Json?
+  enableIpLimit Boolean @default(false)
+  cooldownMinutes Int @default(10)
+  homePageConfig Json?
+  paymentConfig Json?
+  aiConfig Json?
+  emailConfig Json?
+  courierConfig Json?
+  storageConfig Json?
+  updatedAt DateTime @updatedAt
+}
+
+model Category {
+  id String @id @default(uuid())
+  name String
+  slug String @unique
+  parentId String?
+  parent Category? @relation("SubCategories", fields: [parentId], references: [id], onDelete: Cascade)
+  subCategories Category[] @relation("SubCategories")
+  attributeSchema Json?
+  products Product[]
+  createdAt DateTime @default(now())
+}
+
+model Product {
+  id String @id @default(uuid())
+  categoryId String
+  category Category @relation(fields: [categoryId], references: [id])
+  name String
+  slug String @unique
+  description String @db.Text
+  longDescription String? @db.Text
+  price Decimal @db.Decimal(10, 2)
+  salePrice Decimal? @db.Decimal(10, 2)
+  stock Int @default(0)
+  images Json
+  productAttributes Json?
+  variants Json?
+  isPerishable Boolean @default(false)
+  expiryDate DateTime?
+  isActive Boolean @default(true)
+  showOnHome Boolean @default(true)
+  seoTitle String?
+  seoDescription String?
+  reviews Review[]
+  wishlistedBy Wishlist[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Review {
+  id String @id @default(uuid())
+  productId String
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rating Int
+  comment String? @db.Text
+  isApproved Boolean @default(false)
+  createdAt DateTime @default(now())
+  @@unique([productId, userId])
+}
+
+model Wishlist {
+  id String @id @default(uuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productId String
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  @@unique([userId, productId])
+}
+
+model Coupon {
+  id String @id @default(uuid())
+  code String @unique
+  type DiscountType
+  value Decimal @db.Decimal(10, 2)
+  minSpend Decimal? @db.Decimal(10, 2)
+  maxDiscount Decimal? @db.Decimal(10, 2)
+  applicableCategoryIds Json?
+  usageLimit Int?
+  usedCount Int @default(0)
+  perUserLimit Int? @default(1)
+  startsAt DateTime?
+  expiresAt DateTime?
+  isActive Boolean @default(true)
+  orders Order[]
+  createdAt DateTime @default(now())
+}
+
+model Order {
+  id String @id @default(uuid())
+  customerId String?
+  customer User? @relation("CustomerOrders", fields: [customerId], references: [id])
+  ipAddress String
+  status OrderStatus @default(PENDING)
+  paymentMethod String
+  paymentStatus PaymentStatus @default(UNPAID)
+  couponId String?
+  coupon Coupon? @relation(fields: [couponId], references: [id])
+  discountAmount Decimal? @db.Decimal(10, 2)
+  subtotal Decimal @db.Decimal(10, 2)
+  shippingCharge Decimal @db.Decimal(10, 2) @default(0)
+  totalAmount Decimal @db.Decimal(10, 2)
+  shippingDetails Json
+  orderItems Json
+  courierName String?
+  courierTrackingId String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
