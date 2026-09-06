@@ -622,13 +622,20 @@ app.patch("/api/admin/config", requireAuth, requireRole("ADMIN"), async (req, re
     },
   });
 
+  const updatedStorage = config.storageConfig as { encrypted?: string } | null;
+  const updatedPayment = config.paymentConfig as { encrypted?: string } | null;
+  const updatedEmail = config.emailConfig as { encrypted?: string } | null;
+  const updatedCourier = config.courierConfig as { encrypted?: string } | null;
+  const updatedAi = config.aiConfig as { encrypted?: string } | null;
+  const dec = (v: { encrypted?: string } | null) => (v?.encrypted ? (decrypt<Record<string, unknown>>(v.encrypted) ?? null) : null);
   res.json({
     ...config,
-    paymentConfig: Boolean(config.paymentConfig),
-    emailConfig: Boolean(config.emailConfig),
-    courierConfig: Boolean(config.courierConfig),
-    storageConfig: Boolean(config.storageConfig),
-    aiConfig: Boolean(config.aiConfig),
+    featureFlags: { ...defaultFeatureFlags, ...((config.featureFlags as Record<string, boolean> | null) ?? {}) },
+    paymentConfig: dec(updatedPayment),
+    emailConfig: dec(updatedEmail),
+    courierConfig: dec(updatedCourier),
+    storageConfig: dec(updatedStorage),
+    aiConfig: dec(updatedAi),
   });
 });
 
@@ -637,14 +644,22 @@ app.get("/api/admin/config", requireAuth, requireRole("ADMIN"), async (_req, res
   if (!config) return res.status(404).json({ error: "Store is not configured" });
   const encrypted = config.paymentConfig as { encrypted?: string } | null;
   const payments = encrypted?.encrypted ? (decrypt<PaymentSettings>(encrypted.encrypted) ?? {}) : {};
+  const storage = config.storageConfig as { encrypted?: string } | null;
+  const storageDecrypted = storage?.encrypted ? (decrypt<Record<string, unknown>>(storage.encrypted) ?? null) : null;
+  const email = config.emailConfig as { encrypted?: string } | null;
+  const emailDecrypted = email?.encrypted ? (decrypt<Record<string, unknown>>(email.encrypted) ?? null) : null;
+  const courier = config.courierConfig as { encrypted?: string } | null;
+  const courierDecrypted = courier?.encrypted ? (decrypt<Record<string, unknown>>(courier.encrypted) ?? null) : null;
+  const ai = config.aiConfig as { encrypted?: string } | null;
+  const aiDecrypted = ai?.encrypted ? (decrypt<Record<string, unknown>>(ai.encrypted) ?? null) : null;
   res.json({
     ...config,
     featureFlags: { ...defaultFeatureFlags, ...((config.featureFlags as Record<string, boolean> | null) ?? {}) },
-    paymentConfig: {
-      bkash: { enabled: Boolean(payments.bkash?.enabled) },
-      nagad: { enabled: Boolean(payments.nagad?.enabled) },
-      sslcommerz: { enabled: Boolean(payments.sslcommerz?.enabled) },
-    },
+    paymentConfig: payments,
+    emailConfig: emailDecrypted,
+    courierConfig: courierDecrypted,
+    storageConfig: storageDecrypted,
+    aiConfig: aiDecrypted,
     emailConfigured: Boolean(config.emailConfig),
     courierConfigured: Boolean(config.courierConfig),
     storageConfigured: Boolean(config.storageConfig),
