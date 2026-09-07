@@ -372,10 +372,10 @@ app.get("/api/admin/orders", requireAuth, requireRole("ADMIN", "STAFF"), restric
 app.patch("/api/admin/orders/:id", requireAuth, requireRole("ADMIN", "STAFF"), async (req, res) => {
   const data = z
     .object({
-      status: z.enum(["PENDING", "CONFIRMED", "PACKED", "SHIPPED", "DELIVERED", "CANCELLED", "RETURNED"]).optional(),
+      status: z.enum(["PENDING", "CONFIRMED", "PACKED", "SENT", "SHIPPED", "DELIVERED", "CANCELLED", "RETURNED"]).optional(),
       paymentStatus: z.enum(["UNPAID", "PAID", "FAILED", "REFUNDED"]).optional(),
-      courierName: z.string().max(100).optional(),
-      courierTrackingId: z.string().max(200).optional(),
+      courierName: z.string().max(100).nullable().optional(),
+      courierTrackingId: z.string().max(200).nullable().optional(),
     })
     .safeParse(req.body);
   if (!data.success) return res.status(400).json({ error: "Invalid order update" });
