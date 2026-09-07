@@ -79,6 +79,7 @@ app.get("/api/store/status", async (_req, res) => {
       marketingPixels: true,
       featureFlags: true,
       homePageConfig: true,
+      navigationConfig: true,
     },
   });
   const configOut = config ? { ...config, featureFlags: { ...defaultFeatureFlags, ...((config.featureFlags as Record<string, boolean> | null) ?? {}) } } : config;
@@ -104,7 +105,6 @@ app.get("/api/store/checkout-options", async (_req, res) => {
 
 app.get("/api/categories", async (_req, res) => {
   const categories = await prisma.category.findMany({
-    where: { parentId: null },
     include: { _count: { select: { products: { where: { isActive: true } } } } },
     orderBy: { name: "asc" },
   });
@@ -114,10 +114,35 @@ app.get("/api/categories", async (_req, res) => {
 app.get("/api/products", async (req, res) => {
   const category = typeof req.query.category === "string" ? req.query.category : undefined;
   const homeOnly = req.query.home === "1" || req.query.home === "true";
+  let categoryFilter: object = {};
+  if (category) {
+    const cats = await prisma.category.findMany({ select: { id: true, slug: true, parentId: true } });
+    const root = cats.find((c) => c.slug === category);
+    if (!root) {
+      categoryFilter = { id: "__none__" };
+    } else {
+      const byParent = new Map<string, string[]>();
+      for (const c of cats) {
+        if (c.parentId) {
+          const arr = byParent.get(c.parentId) ?? [];
+          arr.push(c.id);
+          byParent.set(c.parentId, arr);
+        }
+      }
+      const ids: string[] = [];
+      const stack = [root.id];
+      while (stack.length) {
+        const cur = stack.pop()!;
+        ids.push(cur);
+        for (const childId of byParent.get(cur) ?? []) stack.push(childId);
+      }
+      categoryFilter = { categoryId: { in: ids } };
+    }
+  }
   const products = await prisma.product.findMany({
     where: {
       isActive: true,
-      ...(category ? { category: { slug: category } } : {}),
+      ...categoryFilter,
       ...(homeOnly ? { showOnHome: true } : {}),
     },
     include: {
@@ -550,6 +575,20 @@ app.patch("/api/admin/config", requireAuth, requireRole("ADMIN"), async (req, re
             .optional(),
         })
         .optional(),
+      navigationConfig: z
+        .object({
+          menus: z
+            .array(
+              z.object({
+                id: z.string().min(1),
+                label: z.string().min(1),
+                location: z.string().min(1),
+                items: z.array(z.any()),
+              })
+            )
+            .default([]),
+        })
+        .optional(),
       enableIpLimit: z.boolean().optional(),
       cooldownMinutes: z.number().int().min(1).max(1440).optional(),
       paymentConfig: paymentSettingsSchema.optional(),
@@ -614,6 +653,7 @@ app.patch("/api/admin/config", requireAuth, requireRole("ADMIN"), async (req, re
       marketingPixels: input.marketingPixels as Prisma.InputJsonValue,
       chatConfig: input.chatConfig as Prisma.InputJsonValue,
       homePageConfig: input.homePageConfig as Prisma.InputJsonValue,
+      navigationConfig: input.navigationConfig as Prisma.InputJsonValue,
       paymentConfig: paymentConfig ? { encrypted: encrypt(paymentConfig) } : undefined,
       emailConfig: input.emailConfig ? { encrypted: encrypt(input.emailConfig) } : undefined,
       courierConfig: input.courierConfig ? { encrypted: encrypt(input.courierConfig) } : undefined,

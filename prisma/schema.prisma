@@ -125,6 +125,7 @@ model StoreConfig {
   enableIpLimit Boolean @default(false)
   cooldownMinutes Int @default(10)
   homePageConfig Json?
+  navigationConfig Json?
   paymentConfig Json?
   aiConfig Json?
   emailConfig Json?
