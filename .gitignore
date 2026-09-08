@@ -23,3 +23,5 @@ prisma/*.db-journal
 .DS_Store
 *.pem
 *.tsbuildinfo
+# uploaded media
+public/uploads/
