@@ -1,5 +1,5 @@
 import { mkdirSync, writeFileSync } from "node:fs";
-import { extname, join } from "node:path";
+import { dirname, extname, join } from "node:path";
 import { prisma } from "./prisma.js";
 import { decrypt } from "./crypto.js";
 
@@ -31,16 +31,14 @@ export async function uploadImage(file: { buffer: Buffer; mimetype: string; orig
 
   const ext = (extname(file.originalname) || ".img").toLowerCase();
   const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
-  const key = `products/${filename}`;
+  const key = `uploads/products/${filename}`;
 
-  if (storageConfig.provider === "local") {
-    const folder = storageConfig.folderPath.replace(/[\\/]+$/, "");
-    const absoluteFolder = join(process.cwd(), folder);
-    mkdirSync(absoluteFolder, { recursive: true });
-    writeFileSync(join(absoluteFolder, filename), file.buffer);
-    const base = storageConfig.publicBaseUrl.replace(/[\\/]+$/, "");
-    return `${base}/${filename}`;
-  }
+if (storageConfig.provider === "local") {
+    const dir = join(process.cwd(), "public", dirname(key));
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(process.cwd(), "public", key), file.buffer);
+    return `/${key}`;
+}
 
   const { PutObjectCommand, S3Client } = await import("@aws-sdk/client-s3");
   const client = new S3Client({ region: storageConfig.region, endpoint: storageConfig.endpoint, forcePathStyle: true, credentials: { accessKeyId: storageConfig.accessKeyId, secretAccessKey: storageConfig.secretAccessKey } });
