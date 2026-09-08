@@ -428,7 +428,7 @@ app.post("/api/admin/products", requireAuth, requireRole("ADMIN", "STAFF"), asyn
       price: z.number().nonnegative(),
       salePrice: z.number().nonnegative().optional(),
       stock: z.number().int().nonnegative(),
-      images: z.array(z.string().url()).min(1),
+      images: z.array(z.string().url().or(z.string().regex(/^\//))).min(1),
       productAttributes: z.unknown().optional(),
       variants: z.unknown().optional(),
       isPerishable: z.boolean().optional(),
