@@ -11,6 +11,7 @@ import { checkIpCooldown, restrictStaffOrderView } from "./middleware/security.j
 import { makeSessionToken, requireAuth, requireRole } from "./middleware/auth.js";
 import { decrypt, encrypt } from "./lib/crypto.js";
 import { uploadImage, deleteImage } from "./lib/storage.js";
+import { baseSkuForParts, generateVariationsForProduct, makeUniqueSku, replaceProductVariations } from "./lib/product-variations.js";
 
 const app = express();
 app.set("trust proxy", 1);
@@ -67,6 +68,36 @@ const paymentSettingsSchema = z.object({
   }).optional(),
 });
 type PaymentSettings = z.infer<typeof paymentSettingsSchema>;
+
+const attributeValueSchema = z.object({
+  id: z.string().min(1),
+  value: z.string().trim().min(1),
+  colorSwatch: z.string().nullable().optional(),
+  image: z.string().nullable().optional(),
+});
+
+const attributeSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().trim().min(1),
+  values: z.array(attributeValueSchema).min(1),
+});
+
+const variationSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().trim().min(1),
+  sku: z.string().nullable().optional(),
+  price: z.number().nonnegative(),
+  salePrice: z.number().nonnegative().nullable().optional(),
+  stock: z.number().int().nonnegative(),
+  manageStock: z.boolean().optional(),
+  weight: z.number().nonnegative().nullable().optional(),
+  image: z.string().nullable().optional(),
+  gallery: z.array(z.string()).optional(),
+  description: z.string().nullable().optional(),
+  status: z.enum(["active", "disabled"]).optional(),
+  isDefault: z.boolean().optional(),
+  attributes: z.array(z.object({ attributeId: z.string().min(1), valueId: z.string().min(1) })).min(1),
+});
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
@@ -145,9 +176,20 @@ app.get("/api/products", async (req, res) => {
       isActive: true,
       ...categoryFilter,
     },
-    include: {
-      category: { select: { name: true, slug: true } },
+    select: {
+      id: true,
+      slug: true,
+      name: true,
+      price: true,
+      salePrice: true,
+      stock: true,
+      productType: true,
+      sku: true,
+      description: true,
+      images: true,
+      defaultVariationId: true,
       imagesDetails: { orderBy: { sortOrder: "asc" } },
+      category: { select: { name: true, slug: true } },
       _count: { select: { reviews: { where: { isApproved: true } } } },
     },
     orderBy: { createdAt: "desc" },
@@ -161,6 +203,11 @@ app.get("/api/products/:slug", async (req, res) => {
     include: {
       category: { select: { name: true, slug: true } },
       imagesDetails: { orderBy: { sortOrder: "asc" } },
+      attributes: { include: { values: true }, orderBy: { createdAt: "asc" } },
+      variations: {
+        include: { attributes: { include: { attribute: { select: { id: true, name: true } }, value: true } } },
+        orderBy: { createdAt: "asc" },
+      },
       reviews: {
         where: { isApproved: true },
         include: { user: { select: { name: true } } },
@@ -298,6 +345,8 @@ app.post("/api/orders", checkIpCooldown, async (req, res) => {
           qty: z.number().int().positive(),
           price: z.number().nonnegative(),
           categoryId: z.string(),
+          variationId: z.string().optional(),
+          sku: z.string().optional(),
         })
       )
       .min(1),
@@ -309,14 +358,33 @@ app.post("/api/orders", checkIpCooldown, async (req, res) => {
     ? (await prisma.session.findUnique({ where: { token: req.header("authorization")!.replace(/^Bearer\s+/i, "") } }))?.userId
     : undefined;
 
-  const order = await prisma.order.create({
-    data: {
-      ...parsed.data,
-      shippingDetails: parsed.data.shippingDetails as Prisma.InputJsonValue,
-      orderItems: parsed.data.orderItems as Prisma.InputJsonValue,
-      ipAddress: req.ip ?? "127.0.0.1",
-      customerId,
-    },
+  const order = await prisma.$transaction(async (tx) => {
+    // Decrement stock for each order item (product-level + variation-level)
+    for (const item of parsed.data.orderItems) {
+      if (item.variationId) {
+        const variation = await tx.productVariation.findUnique({ where: { id: item.variationId }, select: { productId: true, stock: true, manageStock: true } });
+        if (variation && variation.manageStock !== false) {
+          await tx.productVariation.update({
+            where: { id: item.variationId },
+            data: { stock: Math.max(0, variation.stock - item.qty) },
+          });
+        }
+      }
+      const product = await tx.product.findUnique({ where: { id: item.productId }, select: { stock: true, productType: true } });
+      if (product && product.productType !== "VARIABLE") {
+        await tx.product.update({ where: { id: item.productId }, data: { stock: Math.max(0, product.stock - item.qty) } });
+      }
+    }
+
+    return tx.order.create({
+      data: {
+        ...parsed.data,
+        shippingDetails: parsed.data.shippingDetails as Prisma.InputJsonValue,
+        orderItems: parsed.data.orderItems as Prisma.InputJsonValue,
+        ipAddress: req.ip ?? "127.0.0.1",
+        customerId,
+      },
+    });
   });
 
   if (parsed.data.couponId) {
@@ -339,7 +407,17 @@ app.get("/api/admin/dashboard", requireAuth, requireRole("ADMIN", "STAFF"), asyn
 });
 
 app.get("/api/admin/products", requireAuth, requireRole("ADMIN", "STAFF"), async (_req, res) => {
-  res.json(await prisma.product.findMany({ include: { category: { select: { name: true } }, imagesDetails: { orderBy: { sortOrder: "asc" } } }, orderBy: { updatedAt: "desc" } }));
+  res.json(
+    await prisma.product.findMany({
+      include: {
+        category: { select: { name: true } },
+        imagesDetails: { orderBy: { sortOrder: "asc" } },
+        attributes: { include: { values: true } },
+        variations: { include: { attributes: true }, orderBy: { createdAt: "asc" } },
+      },
+      orderBy: { updatedAt: "desc" },
+    })
+  );
 });
 
 app.patch("/api/admin/products/:id", requireAuth, requireRole("ADMIN", "STAFF"), async (req, res) => {
@@ -353,15 +431,38 @@ app.patch("/api/admin/products/:id", requireAuth, requireRole("ADMIN", "STAFF"),
       stock: z.number().int().nonnegative().optional(),
       isActive: z.boolean().optional(),
       showOnHome: z.boolean().optional(),
+      productType: z.enum(["SIMPLE", "VARIABLE"]).optional(),
+      sku: z.string().trim().max(100).nullable().optional(),
+      defaultVariationId: z.string().nullable().optional(),
       images: z.array(z.string().url().or(z.string().regex(/^\//))).optional(),
       imageDetails: z.array(z.object({ url: z.string(), altText: z.string().nullable().optional(), title: z.string().nullable().optional(), sortOrder: z.number().int().nonnegative().optional(), isFeatured: z.boolean().optional() })).optional(),
+      attributes: z.array(attributeSchema).optional(),
+      variations: z.array(variationSchema).optional(),
+      productAttributes: z.unknown().optional(),
       variants: z.unknown().optional(),
       variationImages: z.unknown().optional(),
     })
     .safeParse(req.body);
   if (!data.success) return res.status(400).json({ error: "Invalid product update", details: data.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`) });
 
-  const { imageDetails, images, variationImages, ...rest } = data.data;
+  let { imageDetails, images, variationImages, attributes, variations, defaultVariationId, ...rest } = data.data;
+
+  if (rest.sku === null) rest.sku = undefined;
+
+  if (variations !== undefined && attributes !== undefined) {
+    await replaceProductVariations(id, attributes, variations, rest.sku || undefined);
+  } else if (defaultVariationId !== undefined) {
+    await prisma.product.update({ where: { id }, data: { defaultVariationId: defaultVariationId || null } });
+  } else if (rest.productType === "SIMPLE") {
+    const existingVariations = await prisma.productVariation.count({ where: { productId: id } });
+    if (existingVariations) {
+      await prisma.$transaction([
+        prisma.productVariation.deleteMany({ where: { productId: id } }),
+        prisma.productAttribute.deleteMany({ where: { productId: id } }),
+        prisma.product.update({ where: { id }, data: { defaultVariationId: null } }),
+      ]);
+    }
+  }
 
   if (imageDetails && imageDetails.length) {
     const sorted = [...imageDetails].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
@@ -468,8 +569,12 @@ app.post("/api/admin/products", requireAuth, requireRole("ADMIN", "STAFF"), asyn
       price: z.number().nonnegative(),
       salePrice: z.number().nonnegative().optional(),
       stock: z.number().int().nonnegative(),
+      sku: z.string().trim().max(100).optional(),
+      productType: z.enum(["SIMPLE", "VARIABLE"]).optional(),
       images: z.array(z.string().url().or(z.string().regex(/^\//))).min(1),
       imageDetails: z.array(z.object({ url: z.string(), altText: z.string().nullable().optional(), title: z.string().nullable().optional(), sortOrder: z.number().int().nonnegative().optional(), isFeatured: z.boolean().optional() })).optional(),
+      attributes: z.array(attributeSchema).optional(),
+      variations: z.array(variationSchema).optional(),
       productAttributes: z.unknown().optional(),
       variants: z.unknown().optional(),
       variationImages: z.unknown().optional(),
@@ -481,7 +586,7 @@ app.post("/api/admin/products", requireAuth, requireRole("ADMIN", "STAFF"), asyn
   if (!data.success) {
     return res.status(400).json({ error: "Invalid product", details: data.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`) });
   }
-  const { expiryDate, variationImages, imageDetails, ...product } = data.data;
+  const { expiryDate, variationImages, imageDetails, attributes, variations, ...product } = data.data;
   try {
     const imagesArr = product.images as string[];
     const sorted = imageDetails && imageDetails.length
@@ -491,19 +596,25 @@ app.post("/api/admin/products", requireAuth, requireRole("ADMIN", "STAFF"), asyn
     const normalizedDetails = sorted.length
       ? sorted.map((i, index) => ({ url: i.url, altText: i.altText, title: i.title, sortOrder: index, isFeatured: !hasFeatured ? index === 0 : Boolean(i.isFeatured) }))
       : imagesArr.map((url, index) => ({ url, altText: null as string | null, title: null as string | null, sortOrder: index, isFeatured: index === 0 }));
-    return res.status(201).json(
-      await prisma.product.create({
-        data: {
-          ...product,
-          images: normalizedDetails.filter((i) => i.isFeatured).concat(normalizedDetails.filter((i) => !i.isFeatured)).map((i) => i.url) as unknown as Prisma.InputJsonValue,
-          productAttributes: product.productAttributes as Prisma.InputJsonValue,
-          variants: product.variants as Prisma.InputJsonValue,
-          variationImages: variationImages as Prisma.InputJsonValue,
-          imagesDetails: { create: normalizedDetails },
-          expiryDate: expiryDate ? new Date(expiryDate) : undefined,
-        },
-      })
-    );
+    const created = await prisma.product.create({
+      data: {
+        ...product,
+        images: normalizedDetails.filter((i) => i.isFeatured).concat(normalizedDetails.filter((i) => !i.isFeatured)).map((i) => i.url) as unknown as Prisma.InputJsonValue,
+        productAttributes: (product as { productAttributes?: unknown }).productAttributes as Prisma.InputJsonValue,
+        variants: (product as { variants?: unknown }).variants as Prisma.InputJsonValue,
+        variationImages: variationImages as Prisma.InputJsonValue,
+        imagesDetails: { create: normalizedDetails },
+        expiryDate: expiryDate ? new Date(expiryDate) : undefined,
+      },
+    });
+    if (attributes && variations) {
+      await replaceProductVariations(created.id, attributes, variations, product.sku || undefined);
+    }
+    const result = await prisma.product.findUnique({
+      where: { id: created.id },
+      include: { category: { select: { name: true } }, imagesDetails: { orderBy: { sortOrder: "asc" } }, attributes: { include: { values: true } }, variations: { include: { attributes: true } } },
+    });
+    res.status(201).json(result);
   } catch (error) {
     if (error instanceof PrismaClientKnownRequestError && error.code === "P2002") {
       return res.status(409).json({ error: "A product with this slug already exists - change the product name or slug" });
@@ -609,6 +720,162 @@ app.delete("/api/admin/products/:id/images/:imgId", requireAuth, requireRole("AD
     }
   }
   res.status(204).end();
+});
+
+// Product Variations Management
+const variationInclude = { attributes: { include: { attribute: { select: { id: true, name: true } }, value: true } } } as const;
+
+app.post("/api/admin/products/:id/generate-variations", requireAuth, requireRole("ADMIN", "STAFF"), async (req, res) => {
+  const id = String(req.params.id);
+  const data = z
+    .object({
+      attributes: z.array(z.object({ id: z.string().min(1), name: z.string().min(1), values: z.array(z.object({ id: z.string().min(1), value: z.string().min(1) })).min(1) })).min(1),
+      basePrice: z.number().nonnegative().optional(),
+      baseStock: z.number().int().nonnegative().optional(),
+      skuPrefix: z.string().trim().optional(),
+    })
+    .safeParse(req.body);
+  if (!data.success) return res.status(400).json({ error: "Invalid generate request", details: data.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`) });
+  const product = await prisma.product.findUnique({ where: { id } });
+  if (!product) return res.status(404).json({ error: "Product not found" });
+
+  const attrDetails = await prisma.productAttribute.findMany({ where: { productId: id }, include: { values: true } });
+  const attrTempMap = new Map<string, string>();
+  data.data.attributes.forEach((a) => {
+    const real = attrDetails.find((ad) => ad.name.toLowerCase() === a.name.trim().toLowerCase());
+    attrTempMap.set(a.id, real?.id ?? "");
+    a.values.forEach((v) => {
+      const realVal = real?.values.find((rv) => rv.value.toLowerCase() === v.value.trim().toLowerCase());
+      if (realVal) v.id = realVal.id;
+    });
+  });
+
+  const { created } = await generateVariationsForProduct(
+    id,
+    data.data.attributes.map((a) => ({ id: attrTempMap.get(a.id) || a.id, name: a.name, values: a.values })),
+    { basePrice: data.data.basePrice ?? Number(product.price), baseStock: data.data.baseStock ?? 0, skuPrefix: data.data.skuPrefix || product.sku || undefined }
+  );
+
+  res.status(201).json({ created, variations: await prisma.productVariation.findMany({ where: { productId: id }, include: variationInclude, orderBy: { createdAt: "asc" } }) });
+});
+
+app.patch("/api/admin/products/variations/:vid", requireAuth, requireRole("ADMIN", "STAFF"), async (req, res) => {
+  const vid = String(req.params.vid);
+  const data = z
+    .object({
+      name: z.string().trim().min(1).optional(),
+      sku: z.string().trim().max(100).nullable().optional(),
+      price: z.number().nonnegative().optional(),
+      salePrice: z.number().nonnegative().nullable().optional(),
+      stock: z.number().int().nonnegative().optional(),
+      manageStock: z.boolean().optional(),
+      weight: z.number().nonnegative().nullable().optional(),
+      image: z.string().nullable().optional(),
+      gallery: z.array(z.string()).optional(),
+      description: z.string().nullable().optional(),
+      status: z.enum(["active", "disabled"]).optional(),
+      isDefault: z.boolean().optional(),
+    })
+    .safeParse(req.body);
+  if (!data.success) return res.status(400).json({ error: "Invalid variation update" });
+
+  let skuFinal: string | null | undefined;
+  if (data.data.sku !== undefined) {
+    const trim = data.data.sku?.trim();
+    if (trim) {
+      const existing = await prisma.productVariation.findFirst({ where: { sku: trim.toUpperCase(), id: { not: vid } }, select: { id: true } });
+      if (existing) return res.status(409).json({ error: "SKU already in use by another variation" });
+      skuFinal = trim.toUpperCase();
+    } else {
+      skuFinal = null;
+    }
+  }
+
+  const { isDefault, ...rest } = data.data;
+  const variation = await prisma.productVariation.update({ where: { id: vid }, data: { ...rest, ...(skuFinal !== undefined ? { sku: skuFinal } : {}), gallery: rest.gallery ? (rest.gallery as Prisma.InputJsonValue) : undefined } });
+
+  if (isDefault === true) {
+    await prisma.product.update({ where: { id: variation.productId }, data: { defaultVariationId: variation.id } });
+  } else if (isDefault === false && variation.productId) {
+    const prod = await prisma.product.findUnique({ where: { id: variation.productId }, select: { defaultVariationId: true } });
+    if (prod?.defaultVariationId === variation.id) {
+      await prisma.product.update({ where: { id: variation.productId }, data: { defaultVariationId: null } });
+    }
+  }
+
+  res.json(await prisma.productVariation.findUnique({ where: { id: vid }, include: variationInclude }));
+});
+
+app.post("/api/admin/products/variations/:vid/duplicate", requireAuth, requireRole("ADMIN", "STAFF"), async (req, res) => {
+  const vid = String(req.params.vid);
+  const source = await prisma.productVariation.findUnique({ where: { id: vid }, include: { attributes: true } });
+  if (!source) return res.status(404).json({ error: "Variation not found" });
+  const sku = await makeUniqueSku(source.sku ? `${source.sku}-COPY` : "VAR");
+  const created = await prisma.productVariation.create({
+    data: {
+      productId: source.productId,
+      name: `${source.name} (Copy)`,
+      sku,
+      price: source.price,
+      salePrice: source.salePrice,
+      stock: source.stock,
+      manageStock: source.manageStock,
+      weight: source.weight,
+      image: source.image,
+      gallery: source.gallery as Prisma.InputJsonValue | undefined,
+      description: source.description,
+      status: source.status,
+      attributes: { create: source.attributes.map((a) => ({ attributeId: a.attributeId, valueId: a.valueId })) },
+    },
+  });
+  res.status(201).json(created);
+});
+
+app.delete("/api/admin/products/variations/:vid", requireAuth, requireRole("ADMIN", "STAFF"), async (req, res) => {
+  const variation = await prisma.productVariation.findUnique({ where: { id: String(req.params.vid) }, select: { id: true, productId: true, image: true } });
+  if (!variation) return res.status(404).json({ error: "Variation not found" });
+  await prisma.productVariation.delete({ where: { id: variation.id } });
+  if (variation.image) await deleteImage(variation.image);
+  const prod = await prisma.product.findUnique({ where: { id: variation.productId }, select: { defaultVariationId: true } });
+  if (prod?.defaultVariationId === variation.id) {
+    const first = await prisma.productVariation.findFirst({ where: { productId: variation.productId }, orderBy: { createdAt: "asc" } });
+    await prisma.product.update({ where: { id: variation.productId }, data: { defaultVariationId: first?.id ?? null } });
+  }
+  res.status(204).end();
+});
+
+app.post("/api/admin/products/:id/variations/bulk", requireAuth, requireRole("ADMIN", "STAFF"), async (req, res) => {
+  const productId = String(req.params.id);
+  const data = z
+    .object({
+      ids: z.array(z.string()).min(1),
+      action: z.enum(["setPrice", "setSalePrice", "setStock", "setStatus", "enable", "disable", "delete"]),
+      value: z.number().nonnegative().optional().or(z.enum(["active", "disabled"])).or(z.unknown()),
+    })
+    .safeParse(req.body);
+  if (!data.success) return res.status(400).json({ error: "Invalid bulk action" });
+
+  const { ids, action, value } = data.data;
+
+  if (action === "delete") {
+    const rows = await prisma.productVariation.findMany({ where: { id: { in: ids }, productId }, select: { id: true, image: true } });
+    await prisma.productVariation.deleteMany({ where: { id: { in: ids }, productId } });
+    for (const row of rows) if (row.image) await deleteImage(row.image);
+  } else if (action === "setPrice") {
+    await prisma.productVariation.updateMany({ where: { id: { in: ids }, productId }, data: { price: value as number } });
+  } else if (action === "setSalePrice") {
+    await prisma.productVariation.updateMany({ where: { id: { in: ids }, productId }, data: { salePrice: value === 0 ? null : (value as number) } });
+  } else if (action === "setStock") {
+    await prisma.productVariation.updateMany({ where: { id: { in: ids }, productId }, data: { stock: value as number } });
+  } else if (action === "setStatus") {
+    await prisma.productVariation.updateMany({ where: { id: { in: ids }, productId }, data: { status: value === "disabled" ? "disabled" : "active" } });
+  } else if (action === "enable") {
+    await prisma.productVariation.updateMany({ where: { id: { in: ids }, productId }, data: { status: "active" } });
+  } else if (action === "disable") {
+    await prisma.productVariation.updateMany({ where: { id: { in: ids }, productId }, data: { status: "disabled" } });
+  }
+
+  res.json(await prisma.productVariation.findMany({ where: { productId }, include: variationInclude, orderBy: { createdAt: "asc" } }));
 });
 
 // Admin Coupons Management APIs

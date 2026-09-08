@@ -41,6 +41,11 @@ enum DiscountType {
   FLAT
 }
 
+enum ProductType {
+  SIMPLE
+  VARIABLE
+}
+
 model User {
   id String @id @default(uuid())
   name String
@@ -158,8 +163,13 @@ model Product {
   price Decimal @db.Decimal(10, 2)
   salePrice Decimal? @db.Decimal(10, 2)
   stock Int @default(0)
+  sku String? @unique
+  productType ProductType @default(SIMPLE)
   images Json
   imagesDetails ProductImage[]
+  attributes ProductAttribute[]
+  variations ProductVariation[]
+  defaultVariationId String?
   productAttributes Json?
   variants Json?
   variationImages Json?
@@ -187,6 +197,69 @@ model ProductImage {
   createdAt DateTime @default(now())
 
   @@index([productId])
+}
+
+model ProductAttribute {
+  id String @id @default(uuid())
+  productId String
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name String
+  values AttributeValue[]
+  variations VariationAttribute[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([productId])
+}
+
+model AttributeValue {
+  id String @id @default(uuid())
+  attributeId String
+  attribute ProductAttribute @relation(fields: [attributeId], references: [id], onDelete: Cascade)
+  value String
+  colorSwatch String?
+  image String?
+  variations VariationAttribute[]
+  createdAt DateTime @default(now())
+
+  @@index([attributeId])
+}
+
+model ProductVariation {
+  id String @id @default(uuid())
+  productId String
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name String
+  sku String? @unique
+  price Decimal @db.Decimal(10, 2)
+  salePrice Decimal? @db.Decimal(10, 2)
+  stock Int @default(0)
+  manageStock Boolean @default(true)
+  weight Decimal? @db.Decimal(10, 2)
+  image String?
+  gallery Json?
+  description String? @db.Text
+  status String @default("active")
+  attributes VariationAttribute[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([productId])
+}
+
+model VariationAttribute {
+  id String @id @default(uuid())
+  variationId String
+  variation ProductVariation @relation(fields: [variationId], references: [id], onDelete: Cascade)
+  attributeId String
+  attribute ProductAttribute @relation(fields: [attributeId], references: [id], onDelete: Cascade)
+  valueId String
+  value AttributeValue @relation(fields: [valueId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([variationId, attributeId])
+  @@index([variationId])
+  @@index([attributeId])
 }
 
 model Review {
