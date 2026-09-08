@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import cors from "cors";
 import express from "express";
 import multer from "multer";
+import { PrismaClientKnownRequestError } from "@prisma/client/runtime/library.js";
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "./lib/prisma.js";
@@ -113,7 +114,6 @@ app.get("/api/categories", async (_req, res) => {
 
 app.get("/api/products", async (req, res) => {
   const category = typeof req.query.category === "string" ? req.query.category : undefined;
-  const homeOnly = req.query.home === "1" || req.query.home === "true";
   let categoryFilter: object = {};
   if (category) {
     const cats = await prisma.category.findMany({ select: { id: true, slug: true, parentId: true } });
@@ -143,7 +143,6 @@ app.get("/api/products", async (req, res) => {
     where: {
       isActive: true,
       ...categoryFilter,
-      ...(homeOnly ? { showOnHome: true } : {}),
     },
     include: {
       category: { select: { name: true, slug: true } },
@@ -436,19 +435,28 @@ app.post("/api/admin/products", requireAuth, requireRole("ADMIN", "STAFF"), asyn
       expiryDate: z.string().datetime().optional(),
     })
     .safeParse(req.body);
-  if (!data.success) return res.status(400).json({ error: "Invalid product" });
+  if (!data.success) {
+    return res.status(400).json({ error: "Invalid product", details: data.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`) });
+  }
   const { expiryDate, ...product } = data.data;
-  res.status(201).json(
-    await prisma.product.create({
-      data: {
-        ...product,
-        images: product.images as Prisma.InputJsonValue,
-        productAttributes: product.productAttributes as Prisma.InputJsonValue,
-        variants: product.variants as Prisma.InputJsonValue,
-        expiryDate: expiryDate ? new Date(expiryDate) : undefined,
-      },
-    })
-  );
+  try {
+    return res.status(201).json(
+      await prisma.product.create({
+        data: {
+          ...product,
+          images: product.images as Prisma.InputJsonValue,
+          productAttributes: product.productAttributes as Prisma.InputJsonValue,
+          variants: product.variants as Prisma.InputJsonValue,
+          expiryDate: expiryDate ? new Date(expiryDate) : undefined,
+        },
+      })
+    );
+  } catch (error) {
+    if (error instanceof PrismaClientKnownRequestError && error.code === "P2002") {
+      return res.status(409).json({ error: "A product with this slug already exists — change the product name or slug" });
+    }
+    throw error;
+  }
 });
 
 app.post("/api/admin/upload", requireAuth, requireRole("ADMIN", "STAFF"), upload.single("image"), async (req, res) => {
