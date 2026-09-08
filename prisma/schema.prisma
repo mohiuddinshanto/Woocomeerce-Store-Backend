@@ -159,8 +159,10 @@ model Product {
   salePrice Decimal? @db.Decimal(10, 2)
   stock Int @default(0)
   images Json
+  imagesDetails ProductImage[]
   productAttributes Json?
   variants Json?
+  variationImages Json?
   isPerishable Boolean @default(false)
   expiryDate DateTime?
   isActive Boolean @default(true)
@@ -171,6 +173,20 @@ model Product {
   wishlistedBy Wishlist[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model ProductImage {
+  id String @id @default(uuid())
+  productId String
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  url String
+  altText String?
+  title String?
+  sortOrder Int @default(0)
+  isFeatured Boolean @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([productId])
 }
 
 model Review {

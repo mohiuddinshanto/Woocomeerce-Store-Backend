@@ -10,7 +10,7 @@ import { prisma } from "./lib/prisma.js";
 import { checkIpCooldown, restrictStaffOrderView } from "./middleware/security.js";
 import { makeSessionToken, requireAuth, requireRole } from "./middleware/auth.js";
 import { decrypt, encrypt } from "./lib/crypto.js";
-import { loadStorageConfig, uploadImage } from "./lib/storage.js";
+import { uploadImage, deleteImage } from "./lib/storage.js";
 
 const app = express();
 app.set("trust proxy", 1);
@@ -147,6 +147,7 @@ app.get("/api/products", async (req, res) => {
     },
     include: {
       category: { select: { name: true, slug: true } },
+      imagesDetails: { orderBy: { sortOrder: "asc" } },
       _count: { select: { reviews: { where: { isApproved: true } } } },
     },
     orderBy: { createdAt: "desc" },
@@ -159,6 +160,7 @@ app.get("/api/products/:slug", async (req, res) => {
     where: { slug: req.params.slug },
     include: {
       category: { select: { name: true, slug: true } },
+      imagesDetails: { orderBy: { sortOrder: "asc" } },
       reviews: {
         where: { isApproved: true },
         include: { user: { select: { name: true } } },
@@ -337,10 +339,11 @@ app.get("/api/admin/dashboard", requireAuth, requireRole("ADMIN", "STAFF"), asyn
 });
 
 app.get("/api/admin/products", requireAuth, requireRole("ADMIN", "STAFF"), async (_req, res) => {
-  res.json(await prisma.product.findMany({ include: { category: { select: { name: true } } }, orderBy: { updatedAt: "desc" } }));
+  res.json(await prisma.product.findMany({ include: { category: { select: { name: true } }, imagesDetails: { orderBy: { sortOrder: "asc" } } }, orderBy: { updatedAt: "desc" } }));
 });
 
 app.patch("/api/admin/products/:id", requireAuth, requireRole("ADMIN", "STAFF"), async (req, res) => {
+  const id = String(req.params.id);
   const data = z
     .object({
       name: z.string().min(2).optional(),
@@ -350,10 +353,47 @@ app.patch("/api/admin/products/:id", requireAuth, requireRole("ADMIN", "STAFF"),
       stock: z.number().int().nonnegative().optional(),
       isActive: z.boolean().optional(),
       showOnHome: z.boolean().optional(),
+      images: z.array(z.string().url().or(z.string().regex(/^\//))).optional(),
+      imageDetails: z.array(z.object({ url: z.string(), altText: z.string().nullable().optional(), title: z.string().nullable().optional(), sortOrder: z.number().int().nonnegative().optional(), isFeatured: z.boolean().optional() })).optional(),
+      variants: z.unknown().optional(),
+      variationImages: z.unknown().optional(),
     })
     .safeParse(req.body);
-  if (!data.success) return res.status(400).json({ error: "Invalid product update" });
-  res.json(await prisma.product.update({ where: { id: String(req.params.id) }, data: data.data }));
+  if (!data.success) return res.status(400).json({ error: "Invalid product update", details: data.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`) });
+
+  const { imageDetails, images, variationImages, ...rest } = data.data;
+
+  if (imageDetails && imageDetails.length) {
+    const sorted = [...imageDetails].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+    const hasFeatured = sorted.some((i) => i.isFeatured);
+    const normalized = sorted.map((i, index) => ({ url: i.url, altText: i.altText ?? null, title: i.title ?? null, sortOrder: index, isFeatured: !hasFeatured ? index === 0 : Boolean(i.isFeatured) }));
+    res.json(
+      await prisma.$transaction([
+        prisma.productImage.deleteMany({ where: { productId: id } }),
+        prisma.product.update({
+          where: { id },
+          data: {
+            ...(rest as object),
+            images: normalized.filter((i) => i.isFeatured).concat(normalized.filter((i) => !i.isFeatured)).map((i) => i.url) as unknown as Prisma.InputJsonValue,
+            ...(variationImages !== undefined ? { variationImages: variationImages as Prisma.InputJsonValue } : {}),
+            imagesDetails: { create: normalized },
+          },
+        }),
+      ])
+    );
+    return;
+  }
+
+  res.json(
+    await prisma.product.update({
+      where: { id },
+      data: {
+        ...(rest as object),
+        ...(images ? { images: images as unknown as Prisma.InputJsonValue } : {}),
+        ...(variationImages !== undefined ? { variationImages: variationImages as Prisma.InputJsonValue } : {}),
+      },
+    })
+  );
 });
 
 app.delete("/api/admin/products/:id", requireAuth, requireRole("ADMIN"), async (req, res) => {
@@ -410,9 +450,9 @@ app.patch("/api/admin/categories/:id", requireAuth, requireRole("ADMIN"), async 
 app.delete("/api/admin/categories/:id", requireAuth, requireRole("ADMIN"), async (req, res) => {
   const id = String(req.params.id);
   const count = await prisma.product.count({ where: { categoryId: id } });
-  if (count > 0) return res.status(400).json({ error: "Cannot delete — products exist in this category" });
+  if (count > 0) return res.status(400).json({ error: "Cannot delete: products exist in this category" });
   const children = await prisma.category.count({ where: { parentId: id } });
-  if (children > 0) return res.status(400).json({ error: "Cannot delete — this category has sub-categories" });
+  if (children > 0) return res.status(400).json({ error: "Cannot delete: this category has sub-categories" });
   await prisma.category.delete({ where: { id } });
   res.status(204).end();
 });
@@ -429,8 +469,10 @@ app.post("/api/admin/products", requireAuth, requireRole("ADMIN", "STAFF"), asyn
       salePrice: z.number().nonnegative().optional(),
       stock: z.number().int().nonnegative(),
       images: z.array(z.string().url().or(z.string().regex(/^\//))).min(1),
+      imageDetails: z.array(z.object({ url: z.string(), altText: z.string().nullable().optional(), title: z.string().nullable().optional(), sortOrder: z.number().int().nonnegative().optional(), isFeatured: z.boolean().optional() })).optional(),
       productAttributes: z.unknown().optional(),
       variants: z.unknown().optional(),
+      variationImages: z.unknown().optional(),
       isPerishable: z.boolean().optional(),
       showOnHome: z.boolean().optional(),
       expiryDate: z.string().datetime().optional(),
@@ -439,22 +481,32 @@ app.post("/api/admin/products", requireAuth, requireRole("ADMIN", "STAFF"), asyn
   if (!data.success) {
     return res.status(400).json({ error: "Invalid product", details: data.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`) });
   }
-  const { expiryDate, ...product } = data.data;
+  const { expiryDate, variationImages, imageDetails, ...product } = data.data;
   try {
+    const imagesArr = product.images as string[];
+    const sorted = imageDetails && imageDetails.length
+      ? [...imageDetails].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+      : imagesArr.map((url, index) => ({ url, altText: null as string | null, title: null as string | null, sortOrder: index, isFeatured: index === 0 }));
+    const hasFeatured = sorted.some((i) => i.isFeatured);
+    const normalizedDetails = sorted.length
+      ? sorted.map((i, index) => ({ url: i.url, altText: i.altText, title: i.title, sortOrder: index, isFeatured: !hasFeatured ? index === 0 : Boolean(i.isFeatured) }))
+      : imagesArr.map((url, index) => ({ url, altText: null as string | null, title: null as string | null, sortOrder: index, isFeatured: index === 0 }));
     return res.status(201).json(
       await prisma.product.create({
         data: {
           ...product,
-          images: product.images as Prisma.InputJsonValue,
+          images: normalizedDetails.filter((i) => i.isFeatured).concat(normalizedDetails.filter((i) => !i.isFeatured)).map((i) => i.url) as unknown as Prisma.InputJsonValue,
           productAttributes: product.productAttributes as Prisma.InputJsonValue,
           variants: product.variants as Prisma.InputJsonValue,
+          variationImages: variationImages as Prisma.InputJsonValue,
+          imagesDetails: { create: normalizedDetails },
           expiryDate: expiryDate ? new Date(expiryDate) : undefined,
         },
       })
     );
   } catch (error) {
     if (error instanceof PrismaClientKnownRequestError && error.code === "P2002") {
-      return res.status(409).json({ error: "A product with this slug already exists — change the product name or slug" });
+      return res.status(409).json({ error: "A product with this slug already exists - change the product name or slug" });
     }
     throw error;
   }
@@ -470,6 +522,93 @@ app.post("/api/admin/upload", requireAuth, requireRole("ADMIN", "STAFF"), upload
     console.error("Upload failed:", error);
     res.status(502).json({ error: error instanceof Error ? error.message : "Failed to upload image" });
   }
+});
+
+// Product image management (gallery CRUD)
+// GET  /api/admin/products/:id/images
+// POST /api/admin/products/:id/images        { urls: string[] }  (attach existing uploaded images)
+// PATCH /api/admin/products/images/:imgId    { altText?, title?, isFeatured?, sortOrder? }
+// POST /api/admin/products/images/:imgId/toggle-featured
+// DELETE /api/admin/products/:id/images/:imgId
+
+async function syncProductImages(productId: string) {
+  const rows = await prisma.productImage.findMany({ where: { productId }, orderBy: { sortOrder: "asc" } });
+  const featuredFirst = rows.filter((r) => r.isFeatured).concat(rows.filter((r) => !r.isFeatured));
+  await prisma.product.update({
+    where: { id: productId },
+    data: { images: featuredFirst.map((r) => r.url) as unknown as Prisma.InputJsonValue },
+  });
+  return rows;
+}
+
+app.get("/api/admin/products/:id/images", requireAuth, requireRole("ADMIN", "STAFF"), async (req, res) => {
+  const images = await prisma.productImage.findMany({
+    where: { productId: String(req.params.id) },
+    orderBy: { sortOrder: "asc" },
+  });
+  res.json(images);
+});
+
+app.post("/api/admin/products/:id/images", requireAuth, requireRole("ADMIN", "STAFF"), async (req, res) => {
+  const data = z.object({ urls: z.array(z.string().url().or(z.string().regex(/^\//))).min(1) }).safeParse(req.body);
+  if (!data.success) return res.status(400).json({ error: "Invalid image payload" });
+  const productId = String(req.params.id);
+  const product = await prisma.product.findUnique({ where: { id: productId }, select: { id: true } });
+  if (!product) return res.status(404).json({ error: "Product not found" });
+  const nextOrder = await prisma.productImage.count({ where: { productId } });
+  await prisma.productImage.createMany({
+    data: data.data.urls.map((url, index) => ({
+      productId,
+      url,
+      sortOrder: nextOrder + index,
+      isFeatured: nextOrder + index === 0,
+    })),
+  });
+  const rows = await syncProductImages(productId);
+  res.status(201).json(rows);
+});
+
+app.patch("/api/admin/products/images/:imgId", requireAuth, requireRole("ADMIN", "STAFF"), async (req, res) => {
+  const data = z
+    .object({
+      altText: z.string().nullable().optional(),
+      title: z.string().nullable().optional(),
+      isFeatured: z.boolean().optional(),
+      sortOrder: z.number().int().nonnegative().optional(),
+    })
+    .safeParse(req.body);
+  if (!data.success) return res.status(400).json({ error: "Invalid image update" });
+  const img = await prisma.productImage.update({ where: { id: String(req.params.imgId) }, data: data.data });
+  if (data.data.isFeatured === true) {
+    await prisma.productImage.updateMany({ where: { productId: img.productId, id: { not: img.id } }, data: { isFeatured: false } });
+  }
+  await syncProductImages(img.productId);
+  res.json(await prisma.productImage.findMany({ where: { productId: img.productId }, orderBy: { sortOrder: "asc" } }));
+});
+
+app.post("/api/admin/products/images/:imgId/toggle-featured", requireAuth, requireRole("ADMIN", "STAFF"), async (req, res) => {
+  const img = await prisma.productImage.findUnique({ where: { id: String(req.params.imgId) } });
+  if (!img) return res.status(404).json({ error: "Image not found" });
+  await prisma.productImage.updateMany({ where: { productId: img.productId }, data: { isFeatured: false } });
+  await prisma.productImage.update({ where: { id: img.id }, data: { isFeatured: true } });
+  await syncProductImages(img.productId);
+  res.json(await prisma.productImage.findMany({ where: { productId: img.productId }, orderBy: { sortOrder: "asc" } }));
+});
+
+app.delete("/api/admin/products/:id/images/:imgId", requireAuth, requireRole("ADMIN", "STAFF"), async (req, res) => {
+  const img = await prisma.productImage.findUnique({ where: { id: String(req.params.imgId) } });
+  if (!img || img.productId !== String(req.params.id)) return res.status(404).json({ error: "Image not found" });
+  await prisma.productImage.delete({ where: { id: img.id } });
+  await deleteImage(img.url);
+  const remaining = await syncProductImages(img.productId);
+  if (remaining.length > 0) {
+    const hasFeatured = remaining.some((r) => r.isFeatured);
+    if (!hasFeatured) {
+      await prisma.productImage.update({ where: { id: remaining[0].id }, data: { isFeatured: true } });
+      await syncProductImages(img.productId);
+    }
+  }
+  res.status(204).end();
 });
 
 // Admin Coupons Management APIs
