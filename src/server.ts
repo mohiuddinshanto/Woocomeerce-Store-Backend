@@ -112,6 +112,7 @@ app.get("/api/store/status", async (_req, res) => {
       marketingPixels: true,
       featureFlags: true,
       homePageConfig: true,
+      heroBannerConfig: true,
       navigationConfig: true,
     },
   });
@@ -990,6 +991,21 @@ app.patch("/api/admin/config", requireAuth, requireRole("ADMIN"), async (req, re
             .optional(),
         })
         .optional(),
+      heroBannerConfig: z
+        .object({
+          enabled: z.boolean().optional(),
+          image: z.string().nullable().optional(),
+          badge: z.string().nullable().optional(),
+          title: z.string().nullable().optional(),
+          accent: z.string().nullable().optional(),
+          subtitle: z.string().nullable().optional(),
+          buttonLabel: z.string().nullable().optional(),
+          buttonLink: z.string().nullable().optional(),
+          secondaryLabel: z.string().nullable().optional(),
+          secondaryLink: z.string().nullable().optional(),
+          announceText: z.string().nullable().optional(),
+        })
+        .optional(),
       navigationConfig: z
         .object({
           menus: z
@@ -1068,6 +1084,7 @@ app.patch("/api/admin/config", requireAuth, requireRole("ADMIN"), async (req, re
       marketingPixels: input.marketingPixels as Prisma.InputJsonValue,
       chatConfig: input.chatConfig as Prisma.InputJsonValue,
       homePageConfig: input.homePageConfig as Prisma.InputJsonValue,
+      heroBannerConfig: input.heroBannerConfig as Prisma.InputJsonValue,
       navigationConfig: input.navigationConfig as Prisma.InputJsonValue,
       paymentConfig: paymentConfig ? { encrypted: encrypt(paymentConfig) } : undefined,
       emailConfig: input.emailConfig ? { encrypted: encrypt(input.emailConfig) } : undefined,
