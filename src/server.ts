@@ -1088,7 +1088,7 @@ app.patch("/api/admin/config", requireAuth, requireRole("ADMIN"), async (req, re
   const input = data.data;
   const existing = await prisma.storeConfig.findUnique({
     where: { id: "store-config-singleton" },
-    select: { featureFlags: true, paymentConfig: true, emailConfig: true, courierConfig: true, storageConfig: true, aiConfig: true },
+    select: { featureFlags: true, paymentConfig: true, emailConfig: true, courierConfig: true, storageConfig: true, aiConfig: true, heroBannerConfig: true },
   });
   const priorPayment = decrypt<PaymentSettings>((existing?.paymentConfig as { encrypted?: string } | null)?.encrypted) ?? {};
   const mergeGateway = <T extends Record<string, unknown>>(oldValue: T | undefined, newValue: T | undefined) =>
@@ -1113,13 +1113,15 @@ app.patch("/api/admin/config", requireAuth, requireRole("ADMIN"), async (req, re
   const config = await prisma.storeConfig.update({
     where: { id: "store-config-singleton" },
     data: {
-      ...input,
+      ...Object.fromEntries(Object.entries(input).filter(([, v]) => v !== undefined)),
       themeSettings: input.themeSettings as Prisma.InputJsonValue,
       featureFlags: input.featureFlags ? ({ ...defaultFeatureFlags, ...((existing?.featureFlags as object | null) ?? {}), ...input.featureFlags } as Prisma.InputJsonValue) : undefined,
       marketingPixels: input.marketingPixels as Prisma.InputJsonValue,
       chatConfig: input.chatConfig as Prisma.InputJsonValue,
       homePageConfig: input.homePageConfig as Prisma.InputJsonValue,
-      heroBannerConfig: input.heroBannerConfig as Prisma.InputJsonValue,
+      heroBannerConfig: input.heroBannerConfig
+        ? ({ ...((existing?.heroBannerConfig as Record<string, unknown>) ?? {}), ...Object.fromEntries(Object.entries(input.heroBannerConfig).filter(([, v]) => v !== undefined)) } as Prisma.InputJsonValue)
+        : undefined,
       navigationConfig: input.navigationConfig as Prisma.InputJsonValue,
       paymentConfig: paymentConfig ? { encrypted: encrypt(paymentConfig) } : undefined,
       emailConfig: input.emailConfig ? { encrypted: encrypt(input.emailConfig) } : undefined,
