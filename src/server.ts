@@ -1013,6 +1013,23 @@ app.patch("/api/admin/config", requireAuth, requireRole("ADMIN"), async (req, re
       heroBannerConfig: z
         .object({
           enabled: z.boolean().optional(),
+          announceText: z.string().nullable().optional(),
+          slides: z
+            .array(
+              z.object({
+                id: z.string().min(1),
+                image: z.string().nullable().optional(),
+                badge: z.string().nullable().optional(),
+                title: z.string().nullable().optional(),
+                accent: z.string().nullable().optional(),
+                subtitle: z.string().nullable().optional(),
+                buttonLabel: z.string().nullable().optional(),
+                buttonLink: z.string().nullable().optional(),
+                secondaryLabel: z.string().nullable().optional(),
+                secondaryLink: z.string().nullable().optional(),
+              })
+            )
+            .optional(),
           image: z.string().nullable().optional(),
           badge: z.string().nullable().optional(),
           title: z.string().nullable().optional(),
@@ -1022,7 +1039,6 @@ app.patch("/api/admin/config", requireAuth, requireRole("ADMIN"), async (req, re
           buttonLink: z.string().nullable().optional(),
           secondaryLabel: z.string().nullable().optional(),
           secondaryLink: z.string().nullable().optional(),
-          announceText: z.string().nullable().optional(),
         })
         .optional(),
       navigationConfig: z
