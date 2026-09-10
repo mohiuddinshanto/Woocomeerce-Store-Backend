@@ -92,7 +92,7 @@ const variationSchema = z.object({
   manageStock: z.boolean().optional(),
   weight: z.number().nonnegative().nullable().optional(),
   image: z.string().nullable().optional(),
-  gallery: z.array(z.string()).optional(),
+  gallery: z.array(z.string()).nullable().optional(),
   description: z.string().nullable().optional(),
   status: z.enum(["active", "disabled"]).optional(),
   isDefault: z.boolean().optional(),
@@ -188,8 +188,26 @@ app.get("/api/products", async (req, res) => {
       sku: true,
       description: true,
       images: true,
+      categoryId: true,
       defaultVariationId: true,
       imagesDetails: { orderBy: { sortOrder: "asc" } },
+      attributes: { select: { id: true, name: true, values: { select: { id: true, value: true } } } },
+      variations: {
+        select: {
+          id: true,
+          name: true,
+          sku: true,
+          price: true,
+          salePrice: true,
+          stock: true,
+          image: true,
+          attributes: {
+            select: { attributeId: true, valueId: true, value: { select: { value: true } } },
+          },
+        },
+        where: { status: "active" },
+        orderBy: { createdAt: "asc" },
+      },
       category: { select: { name: true, slug: true } },
       _count: { select: { reviews: { where: { isApproved: true } } } },
     },
@@ -973,6 +991,7 @@ app.patch("/api/admin/config", requireAuth, requireRole("ADMIN"), async (req, re
       chatConfig: z.unknown().optional(),
       homePageConfig: z
         .object({
+          layout: z.enum(["classic", "catalog"]).optional(),
           sections: z
             .array(
               z.object({

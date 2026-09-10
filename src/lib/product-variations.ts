@@ -29,7 +29,7 @@ export type VariationInput = {
   manageStock?: boolean;
   weight?: number | null;
   image?: string | null;
-  gallery?: string[];
+  gallery?: string[] | null;
   description?: string | null;
   status?: string;
   isDefault?: boolean;
