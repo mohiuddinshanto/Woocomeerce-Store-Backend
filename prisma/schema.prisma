@@ -145,6 +145,7 @@ model Category {
   id String @id @default(uuid())
   name String
   slug String @unique
+  image String?
   parentId String?
   parent Category? @relation("SubCategories", fields: [parentId], references: [id], onDelete: Cascade)
   subCategories Category[] @relation("SubCategories")

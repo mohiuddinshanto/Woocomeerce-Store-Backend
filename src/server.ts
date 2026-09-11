@@ -548,6 +548,7 @@ app.post("/api/admin/categories", requireAuth, requireRole("ADMIN"), async (req,
       name: z.string().trim().min(2),
       slug: z.string().regex(/^[a-z0-9-]+$/),
       parentId: z.string().optional(),
+      image: z.string().max(500).nullable().optional(),
       attributeSchema: z.unknown().optional(),
     })
     .safeParse(req.body);
@@ -561,6 +562,7 @@ app.patch("/api/admin/categories/:id", requireAuth, requireRole("ADMIN"), async 
       name: z.string().trim().min(2).optional(),
       slug: z.string().regex(/^[a-z0-9-]+$/).optional(),
       parentId: z.string().nullable().optional(),
+      image: z.string().max(500).nullable().optional(),
     })
     .safeParse(req.body);
   if (!data.success) return res.status(400).json({ error: "Invalid category update" });
@@ -992,6 +994,16 @@ app.patch("/api/admin/config", requireAuth, requireRole("ADMIN"), async (req, re
       homePageConfig: z
         .object({
           layout: z.enum(["classic", "catalog"]).optional(),
+          categories: z
+            .object({
+              mode: z.enum(["grid", "carousel", "loop"]).optional(),
+              auto: z.boolean().optional(),
+              loop: z.boolean().optional(),
+              seconds: z.number().int().min(1).max(60).optional(),
+              pagination: z.boolean().optional(),
+              perView: z.object({ mobile: z.number().min(0.5).max(10), tablet: z.number().min(0.5).max(12), desktop: z.number().min(0.5).max(16) }).optional(),
+            })
+            .optional(),
           sections: z
             .array(
               z.object({
@@ -1039,6 +1051,13 @@ app.patch("/api/admin/config", requireAuth, requireRole("ADMIN"), async (req, re
           buttonLink: z.string().nullable().optional(),
           secondaryLabel: z.string().nullable().optional(),
           secondaryLink: z.string().nullable().optional(),
+          trendingPill: z
+            .object({
+              enabled: z.boolean().optional(),
+              topText: z.string().nullable().optional(),
+              bottomText: z.string().nullable().optional(),
+            })
+            .optional(),
         })
         .optional(),
       navigationConfig: z
