@@ -1001,7 +1001,7 @@ app.patch("/api/admin/config", requireAuth, requireRole("ADMIN"), async (req, re
                 mode: z.enum(["carousel", "grid", "responsive"]),
                 auto: z.boolean(),
                 seconds: z.number().int().min(1).max(60),
-                perView: z.object({ mobile: z.number().int().min(1).max(4), tablet: z.number().int().min(1).max(6), desktop: z.number().int().min(1).max(8) }),
+                perView: z.object({ mobile: z.number().min(0.5).max(10), tablet: z.number().min(0.5).max(12), desktop: z.number().min(0.5).max(16) }),
                 pagination: z.boolean(),
                 loop: z.boolean(),
                 showViewAll: z.boolean(),
