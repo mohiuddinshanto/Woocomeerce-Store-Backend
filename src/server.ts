@@ -604,6 +604,81 @@ app.post("/api/admin/orders/:id/send-steadfast", requireAuth, requireRole("ADMIN
   res.json({ ok: true, consignment: body.consignment, order: updated });
 });
 
+function getSteadfastClient() {
+  return prisma.storeConfig.findUnique({ where: { id: "store-config-singleton" }, select: { courierConfig: true } });
+}
+function decodeSteadfast(settings: { courierConfig: unknown } | null) {
+  if (!settings?.courierConfig) return null;
+  const courier = (settings.courierConfig as { encrypted?: string })?.encrypted
+    ? (decrypt<{ steadfast?: { enabled?: boolean; apiKey?: string; secretKey?: string } }>(String((settings.courierConfig as { encrypted?: string }).encrypted)) ?? {})
+    : {};
+  const sf = courier.steadfast;
+  if (!sf?.enabled || !sf.apiKey || !sf.secretKey) return null;
+  return sf as { apiKey: string; secretKey: string };
+}
+
+app.post("/api/admin/orders/:id/sync-steadfast", requireAuth, requireRole("ADMIN", "STAFF"), async (req, res) => {
+  const order = await prisma.order.findUnique({ where: { id: String(req.params.id) } });
+  if (!order) return res.status(404).json({ error: "Order not found" });
+  if ((order.courierName ?? "").trim().toLowerCase() !== "steadfast" || !order.courierTrackingId)
+    return res.status(400).json({ error: "Order is not sent via Steadfast" });
+
+  const sf = await getSteadfastClient().then(decodeSteadfast);
+  if (!sf) return res.status(400).json({ error: "Steadfast API credentials missing" });
+
+  let response: Response;
+  try {
+    response = await fetch(`https://portal.packzy.com/api/v1/status_by_trackingcode/${encodeURIComponent(order.courierTrackingId)}`, {
+      headers: { "Content-Type": "application/json", "Api-Key": sf.apiKey, "Secret-Key": sf.secretKey },
+    });
+  } catch {
+    return res.status(502).json({ error: "Could not reach Steadfast API" });
+  }
+  const body = (await response.json().catch(() => ({}))) as { status?: number; delivery_status?: string; message?: string };
+  if (!response.ok || body.status !== 200 || !body.delivery_status) {
+    return res.status(502).json({ error: body.message || `Steadfast error (${response.status})` });
+  }
+
+  const sd = (order.shippingDetails ?? {}) as Record<string, unknown>;
+  const updated = await prisma.order.update({
+    where: { id: order.id },
+    data: { shippingDetails: { ...sd, sfStatus: body.delivery_status, sfSyncedAt: new Date().toISOString() } as Prisma.InputJsonValue },
+  });
+  res.json({ ok: true, delivery_status: body.delivery_status, sfSyncedAt: (updated.shippingDetails as Record<string, unknown>)?.sfSyncedAt });
+});
+
+app.post("/api/admin/orders/sync-all-steadfast", requireAuth, requireRole("ADMIN", "STAFF"), async (_req, res) => {
+  const sf = await getSteadfastClient().then(decodeSteadfast);
+  if (!sf) return res.status(400).json({ error: "Steadfast API credentials missing" });
+
+  const parcels = (await prisma.order.findMany({ where: { courierTrackingId: { not: null } } })).filter(
+    (o) => (o.courierName ?? "").trim().toLowerCase() === "steadfast"
+  );
+  if (!parcels.length) return res.json({ ok: true, synced: 0, failed: 0, statuses: {} });
+
+  const statuses: Record<string, string> = {};
+  let failed = 0;
+  for (const order of parcels) {
+    try {
+      const response = await fetch(`https://portal.packzy.com/api/v1/status_by_trackingcode/${encodeURIComponent(order.courierTrackingId!)}`, {
+        headers: { "Content-Type": "application/json", "Api-Key": sf.apiKey, "Secret-Key": sf.secretKey },
+      });
+      const body = (await response.json().catch(() => ({}))) as { status?: number; delivery_status?: string };
+      if (response.ok && body.status === 200 && body.delivery_status) {
+        const sd = (order.shippingDetails ?? {}) as Record<string, unknown>;
+        await prisma.order.update({
+          where: { id: order.id },
+          data: { shippingDetails: { ...sd, sfStatus: body.delivery_status, sfSyncedAt: new Date().toISOString() } as Prisma.InputJsonValue },
+        });
+        statuses[order.id] = body.delivery_status;
+      } else failed++;
+    } catch {
+      failed++;
+    }
+  }
+  res.json({ ok: true, synced: parcels.length - failed, failed, statuses });
+});
+
 app.post("/api/admin/categories", requireAuth, requireRole("ADMIN"), async (req, res) => {
   const data = z
     .object({
