@@ -685,6 +685,25 @@ app.post("/api/admin/orders/sync-all-steadfast", requireAuth, requireRole("ADMIN
   res.json({ ok: true, synced: parcels.length - failed, failed, statuses });
 });
 
+app.get("/api/admin/steadfast/balance", requireAuth, requireRole("ADMIN", "STAFF"), async (_req, res) => {
+  const sf = await getSteadfastClient().then(decodeSteadfast);
+  if (!sf) return res.status(400).json({ error: "Steadfast API credentials missing" });
+
+  let response: Response;
+  try {
+    response = await fetch("https://portal.packzy.com/api/v1/get_balance", {
+      headers: { "Content-Type": "application/json", "Api-Key": sf.apiKey, "Secret-Key": sf.secretKey },
+    });
+  } catch {
+    return res.status(502).json({ error: "Could not reach Steadfast API" });
+  }
+  const body = (await response.json().catch(() => ({}))) as { status?: number; current_balance?: number; message?: string };
+  if (!response.ok || body.status !== 200 || typeof body.current_balance !== "number") {
+    return res.status(502).json({ error: body.message || `Steadfast error (${response.status})` });
+  }
+  res.json({ ok: true, balance: body.current_balance, fetchedAt: new Date().toISOString() });
+});
+
 app.post("/api/admin/categories", requireAuth, requireRole("ADMIN"), async (req, res) => {
   const data = z
     .object({
