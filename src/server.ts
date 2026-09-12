@@ -708,7 +708,7 @@ app.post("/api/admin/categories", requireAuth, requireRole("ADMIN"), async (req,
   const data = z
     .object({
       name: z.string().trim().min(2),
-      slug: z.string().regex(/^[a-z0-9-]+$/),
+      slug: z.string().min(1),
       parentId: z.string().optional(),
       image: z.string().max(500).nullable().optional(),
       attributeSchema: z.unknown().optional(),
@@ -722,7 +722,7 @@ app.patch("/api/admin/categories/:id", requireAuth, requireRole("ADMIN"), async 
   const data = z
     .object({
       name: z.string().trim().min(2).optional(),
-      slug: z.string().regex(/^[a-z0-9-]+$/).optional(),
+      slug: z.string().min(1).optional(),
       parentId: z.string().nullable().optional(),
       image: z.string().max(500).nullable().optional(),
     })
@@ -746,7 +746,7 @@ app.post("/api/admin/products", requireAuth, requireRole("ADMIN", "STAFF"), asyn
     .object({
       categoryId: z.string(),
       name: z.string().min(2),
-      slug: z.string().regex(/^[a-z0-9-]+$/),
+      slug: z.string().min(1),
       description: z.string().min(10),
       longDescription: z.string().optional(),
       price: z.number().nonnegative(),
