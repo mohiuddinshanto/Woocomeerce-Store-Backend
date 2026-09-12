@@ -542,6 +542,68 @@ app.patch("/api/admin/orders/:id", requireAuth, requireRole("ADMIN", "STAFF"), a
   res.json(await prisma.order.update({ where: { id: String(req.params.id) }, data: data.data }));
 });
 
+app.post("/api/admin/orders/:id/send-steadfast", requireAuth, requireRole("ADMIN", "STAFF"), async (req, res) => {
+  const order = await prisma.order.findUnique({ where: { id: String(req.params.id) } });
+  if (!order) return res.status(404).json({ error: "Order not found" });
+  if (order.courierName && order.courierName !== "Steadfast") return res.status(400).json({ error: `Order already sent via ${order.courierName}` });
+
+  const settings = await prisma.storeConfig.findUnique({ where: { id: "store-config-singleton" }, select: { courierConfig: true } });
+  if (!settings || !settings.courierConfig) return res.status(400).json({ error: "Steadfast is not configured" });
+  const courier = (settings.courierConfig as { encrypted?: string })?.encrypted
+    ? (decrypt<{ steadfast?: { enabled?: boolean; apiKey?: string; secretKey?: string } }>(String((settings.courierConfig as { encrypted?: string }).encrypted)) ?? {})
+    : {};
+  const sf = courier.steadfast;
+  if (!sf?.enabled) return res.status(400).json({ error: "Steadfast is not enabled" });
+  if (!sf.apiKey || !sf.secretKey) return res.status(400).json({ error: "Steadfast API credentials missing" });
+
+  const sd = (order.shippingDetails ?? {}) as { name?: string; phone?: string; address?: string };
+  const name = (sd.name ?? "").trim();
+  const phone = (sd.phone ?? "").trim().replace(/[^0-9]/g, "");
+  const address = (sd.address ?? "").trim();
+  if (!name) return res.status(400).json({ error: "Recipient name is missing on this order" });
+  if (!/^01[0-9]{9}$/.test(phone)) return res.status(400).json({ error: `Invalid recipient phone: ${phone || "missing"}` });
+  if (address.length < 5) return res.status(400).json({ error: "Recipient address is too short" });
+
+  const codAmount = order.paymentStatus === "UNPAID" ? Number(order.totalAmount) : 0;
+
+  let response: Response;
+  try {
+    response = await fetch("https://portal.packzy.com/api/v1/create_order", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Api-Key": sf.apiKey,
+        "Secret-Key": sf.secretKey,
+      },
+      body: JSON.stringify({
+        invoice: order.id,
+        recipient_name: name,
+        recipient_phone: phone,
+        recipient_address: address.slice(0, 250),
+        cod_amount: codAmount,
+        note: "Placed from web store",
+      }),
+    });
+  } catch {
+    return res.status(502).json({ error: "Could not reach Steadfast API" });
+  }
+  const body = (await response.json().catch(() => ({}))) as {
+    status?: number;
+    message?: string;
+    consignment?: { consignment_id?: number; tracking_code?: string; invoice?: string };
+  };
+  if (!response.ok || body.status !== 200 || !body.consignment) {
+    return res.status(502).json({ error: body.message || `Steadfast error (${response.status})` });
+  }
+
+  const tracking = String(body.consignment.tracking_code ?? body.consignment.consignment_id ?? "");
+  const updated = await prisma.order.update({
+    where: { id: order.id },
+    data: { status: "SENT", courierName: "Steadfast", courierTrackingId: tracking },
+  });
+  res.json({ ok: true, consignment: body.consignment, order: updated });
+});
+
 app.post("/api/admin/categories", requireAuth, requireRole("ADMIN"), async (req, res) => {
   const data = z
     .object({
@@ -994,6 +1056,20 @@ app.patch("/api/admin/config", requireAuth, requireRole("ADMIN"), async (req, re
       homePageConfig: z
         .object({
           layout: z.enum(["classic", "catalog"]).optional(),
+          flashDeal: z
+            .object({
+              enabled: z.boolean().optional(),
+              badge: z.string().max(120).optional(),
+              titlePrefix: z.string().max(120).optional(),
+              description: z.string().max(400).optional(),
+              buttonLabel: z.string().max(60).optional(),
+              productId: z.string().optional(),
+              autoPick: z.boolean().optional(),
+              countdownMode: z.enum(["midnight", "hours"]).optional(),
+              countdownHours: z.number().int().min(1).max(168).optional(),
+              showCountdown: z.boolean().optional(),
+            })
+            .optional(),
           categories: z
             .object({
               mode: z.enum(["grid", "carousel", "loop"]).optional(),
@@ -1019,6 +1095,32 @@ app.patch("/api/admin/config", requireAuth, requireRole("ADMIN"), async (req, re
                 showViewAll: z.boolean(),
               })
             )
+            .optional(),
+          promoBanners: z
+            .array(
+              z.object({
+                enabled: z.boolean().optional(),
+                badge: z.string().max(100).optional(),
+                title: z.string().max(150).optional(),
+                accent: z.string().max(150).optional(),
+                subtitle: z.string().max(300).optional(),
+                buttonLabel: z.string().max(80).optional(),
+                buttonLink: z.string().max(300).optional(),
+                image: z.string().max(500).optional(),
+              })
+            )
+            .max(2)
+            .optional(),
+          trustBadges: z
+            .array(
+              z.object({
+                enabled: z.boolean().optional(),
+                icon: z.string().max(40).optional(),
+                title: z.string().max(100).optional(),
+                subtitle: z.string().max(200).optional(),
+              })
+            )
+            .max(4)
             .optional(),
         })
         .optional(),
