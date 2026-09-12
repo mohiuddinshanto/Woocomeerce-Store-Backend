@@ -15,7 +15,18 @@ import { baseSkuForParts, generateVariationsForProduct, makeUniqueSku, replacePr
 
 const app = express();
 app.set("trust proxy", 1);
-app.use(cors({ origin: process.env.FRONTEND_URL ?? "http://localhost:3000" }));
+const allowedOrigins = (process.env.FRONTEND_URL ?? "http://localhost:3000")
+  .split(",")
+  .map((o) => o.trim())
+  .filter(Boolean);
+app.use(
+  cors({
+    origin(origin, cb) {
+      if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
+      cb(null, false);
+    },
+  })
+);
 app.use(express.json());
 app.use("/uploads", express.static("public/uploads"));
 const upload = multer({
@@ -107,6 +118,7 @@ app.get("/api/store/status", async (_req, res) => {
     select: {
       isOnboarded: true,
       storeName: true,
+      logoUrl: true,
       themeSettings: true,
       chatConfig: true,
       marketingPixels: true,
@@ -118,6 +130,22 @@ app.get("/api/store/status", async (_req, res) => {
   });
   const configOut = config ? { ...config, featureFlags: { ...defaultFeatureFlags, ...((config.featureFlags as Record<string, boolean> | null) ?? {}) } } : config;
   res.json({ onboarded: Boolean(config?.isOnboarded), config: configOut });
+});
+
+app.post("/api/newsletter/subscribe", async (req, res) => {
+  const parsed = z.object({ email: z.string().email().max(200) }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Invalid email address" });
+  const { email } = parsed.data;
+  try {
+    await prisma.newsletterSubscriber.upsert({
+      where: { email },
+      create: { email },
+      update: {},
+    });
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ error: "Could not save subscription" });
+  }
 });
 
 app.get("/api/store/checkout-options", async (_req, res) => {
@@ -1178,6 +1206,10 @@ app.patch("/api/admin/config", requireAuth, requireRole("ADMIN"), async (req, re
               seconds: z.number().int().min(1).max(60).optional(),
               pagination: z.boolean().optional(),
               perView: z.object({ mobile: z.number().min(0.5).max(10), tablet: z.number().min(0.5).max(12), desktop: z.number().min(0.5).max(16) }).optional(),
+              eyebrow: z.string().max(60).optional(),
+              title: z.string().max(120).optional(),
+              accent: z.string().max(120).optional(),
+              countLabel: z.string().max(40).optional(),
             })
             .optional(),
           sections: z
@@ -1222,12 +1254,64 @@ app.patch("/api/admin/config", requireAuth, requireRole("ADMIN"), async (req, re
             )
             .max(4)
             .optional(),
+          testimonials: z
+            .object({
+              enabled: z.boolean().optional(),
+              eyebrow: z.string().max(60).optional(),
+              title: z.string().max(120).optional(),
+              accent: z.string().max(120).optional(),
+              subtitle: z.string().max(300).optional(),
+              items: z
+                .array(
+                  z.object({
+                    init: z.string().max(5).optional(),
+                    name: z.string().max(100).optional(),
+                    role: z.string().max(150).optional(),
+                    quote: z.string().max(500).optional(),
+                    rating: z.number().int().min(1).max(5).optional(),
+                  })
+                )
+                .max(12)
+                .optional(),
+            })
+            .optional(),
+          newsletter: z
+            .object({
+              enabled: z.boolean().optional(),
+              badge: z.string().max(60).optional(),
+              title: z.string().max(120).optional(),
+              accent: z.string().max(120).optional(),
+              subtitle: z.string().max(300).optional(),
+              placeholder: z.string().max(100).optional(),
+              button: z.string().max(60).optional(),
+              note: z.string().max(200).optional(),
+            })
+            .optional(),
+          footer: z
+            .object({
+              enabled: z.boolean().optional(),
+              copyright: z.string().max(200).optional(),
+              links: z
+                .array(
+                  z.object({
+                    label: z.string().max(60).optional(),
+                    url: z.string().max(200).optional(),
+                  })
+                )
+                .max(10)
+                .optional(),
+            })
+            .optional(),
         })
         .optional(),
       heroBannerConfig: z
         .object({
           enabled: z.boolean().optional(),
           announceText: z.string().nullable().optional(),
+          announceBadge: z.string().max(60).nullable().optional(),
+          announceLinkLabel: z.string().max(40).nullable().optional(),
+          announceLink: z.string().max(200).nullable().optional(),
+          seconds: z.number().int().min(2).max(30).optional(),
           slides: z
             .array(
               z.object({

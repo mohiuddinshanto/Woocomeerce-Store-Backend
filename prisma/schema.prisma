@@ -105,6 +105,12 @@ model Verification {
   updatedAt DateTime? @updatedAt
 }
 
+model NewsletterSubscriber {
+  id String @id @default(uuid())
+  email String @unique
+  subscribedAt DateTime @default(now())
+}
+
 model Address {
   id String @id @default(uuid())
   userId String
