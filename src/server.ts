@@ -556,10 +556,10 @@ app.post("/api/admin/orders/:id/send-steadfast", requireAuth, requireRole("ADMIN
   if (!sf?.enabled) return res.status(400).json({ error: "Steadfast is not enabled" });
   if (!sf.apiKey || !sf.secretKey) return res.status(400).json({ error: "Steadfast API credentials missing" });
 
-  const sd = (order.shippingDetails ?? {}) as { name?: string; phone?: string; address?: string };
-  const name = (sd.name ?? "").trim();
-  const phone = (sd.phone ?? "").trim().replace(/[^0-9]/g, "");
-  const address = (sd.address ?? "").trim();
+  const shipping = (order.shippingDetails ?? {}) as { name?: string; phone?: string; address?: string };
+  const name = (shipping.name ?? "").trim();
+  const phone = (shipping.phone ?? "").trim().replace(/[^0-9]/g, "");
+  const address = (shipping.address ?? "").trim();
   if (!name) return res.status(400).json({ error: "Recipient name is missing on this order" });
   if (!/^01[0-9]{9}$/.test(phone)) return res.status(400).json({ error: `Invalid recipient phone: ${phone || "missing"}` });
   if (address.length < 5) return res.status(400).json({ error: "Recipient address is too short" });
@@ -597,9 +597,15 @@ app.post("/api/admin/orders/:id/send-steadfast", requireAuth, requireRole("ADMIN
   }
 
   const tracking = String(body.consignment.tracking_code ?? body.consignment.consignment_id ?? "");
+  const sd = (order.shippingDetails ?? {}) as Record<string, unknown>;
   const updated = await prisma.order.update({
     where: { id: order.id },
-    data: { status: "SENT", courierName: "Steadfast", courierTrackingId: tracking },
+    data: {
+      status: "SENT",
+      courierName: "Steadfast",
+      courierTrackingId: tracking,
+      shippingDetails: { ...sd, sfConsignmentId: body.consignment.consignment_id != null ? String(body.consignment.consignment_id) : undefined, sfTrackingCode: tracking || undefined } as Prisma.InputJsonValue,
+    },
   });
   res.json({ ok: true, consignment: body.consignment, order: updated });
 });
@@ -642,7 +648,7 @@ app.post("/api/admin/orders/:id/sync-steadfast", requireAuth, requireRole("ADMIN
   const sd = (order.shippingDetails ?? {}) as Record<string, unknown>;
   const updated = await prisma.order.update({
     where: { id: order.id },
-    data: { shippingDetails: { ...sd, sfStatus: body.delivery_status, sfSyncedAt: new Date().toISOString() } as Prisma.InputJsonValue },
+    data: { shippingDetails: { ...sd, sfStatus: body.delivery_status, sfTrackingCode: sd.sfTrackingCode ?? order.courierTrackingId, sfSyncedAt: new Date().toISOString() } as Prisma.InputJsonValue },
   });
   res.json({ ok: true, delivery_status: body.delivery_status, sfSyncedAt: (updated.shippingDetails as Record<string, unknown>)?.sfSyncedAt });
 });
@@ -668,7 +674,7 @@ app.post("/api/admin/orders/sync-all-steadfast", requireAuth, requireRole("ADMIN
         const sd = (order.shippingDetails ?? {}) as Record<string, unknown>;
         await prisma.order.update({
           where: { id: order.id },
-          data: { shippingDetails: { ...sd, sfStatus: body.delivery_status, sfSyncedAt: new Date().toISOString() } as Prisma.InputJsonValue },
+          data: { shippingDetails: { ...sd, sfStatus: body.delivery_status, sfTrackingCode: sd.sfTrackingCode ?? order.courierTrackingId, sfSyncedAt: new Date().toISOString() } as Prisma.InputJsonValue },
         });
         statuses[order.id] = body.delivery_status;
       } else failed++;
