@@ -12,7 +12,7 @@ import { makeSessionToken, requireAuth, requireRole } from "./middleware/auth.js
 import { decrypt, encrypt } from "./lib/crypto.js";
 import { uploadImage, deleteImage } from "./lib/storage.js";
 import { baseSkuForParts, generateVariationsForProduct, makeUniqueSku, replaceProductVariations } from "./lib/product-variations.js";
-import { sendNewsletterWelcome, sendOrderConfirmation, sendOrderStatusEmail, sendTestMail } from "./lib/mailer.js";
+import { sendNewOrderToOwner, sendNewsletterWelcome, sendOrderConfirmation, sendOrderStatusEmail, sendTestMail } from "./lib/mailer.js";
 
 const app = express();
 app.set("trust proxy", 1);
@@ -455,12 +455,24 @@ app.post("/api/orders", checkIpCooldown, async (req, res) => {
   }
 
   const customerEmail = String((parsed.data.shippingDetails as Record<string, unknown>)?.email ?? "").trim();
+  const shipDetails = (parsed.data.shippingDetails as Record<string, unknown>) ?? {};
+  sendNewOrderToOwner({
+    orderId: order.id,
+    customerName: String(shipDetails.name ?? shipDetails.fullname ?? ""),
+    customerPhone: String(shipDetails.phone ?? "-"),
+    customerEmail,
+    items: parsed.data.orderItems.map((i) => ({ name: i.name, qty: i.qty, price: i.price })),
+    subtotal: parsed.data.subtotal,
+    shippingCharge: parsed.data.shippingCharge,
+    discountAmount: parsed.data.discountAmount ?? 0,
+    totalAmount: parsed.data.totalAmount,
+    paymentMethod: parsed.data.paymentMethod,
+  }).catch((err) => console.error("owner notification mail failed:", err.message));
   if (customerEmail) {
-    const details = (parsed.data.shippingDetails as Record<string, unknown>) ?? {};
     sendOrderConfirmation({
       orderId: order.id,
       customerEmail,
-      customerName: String(details.name ?? details.fullname ?? ""),
+      customerName: String(shipDetails.name ?? shipDetails.fullname ?? ""),
       items: parsed.data.orderItems.map((i) => ({ name: i.name, qty: i.qty, price: i.price })),
       subtotal: parsed.data.subtotal,
       shippingCharge: parsed.data.shippingCharge,

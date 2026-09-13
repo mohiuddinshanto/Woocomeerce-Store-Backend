@@ -90,6 +90,56 @@ export async function sendOrderConfirmation(order: {
   });
 }
 
+export async function sendNewOrderToOwner(order: {
+  orderId: string;
+  customerName: string;
+  customerPhone: string;
+  customerEmail: string;
+  items: { name: string; qty: number; price: number }[];
+  subtotal: number;
+  shippingCharge: number;
+  discountAmount: number;
+  totalAmount: number;
+  paymentMethod: string;
+}): Promise<void> {
+  const setup = await getSmtp();
+  if (!setup) return;
+  const money = (v: number) => "৳ " + Number(v).toLocaleString("en-BD");
+  const rows = order.items
+    .map(
+      (i) => `
+        <tr>
+          <td style="padding:6px 0;color:#111827">${escapeHtml(i.name)} × ${i.qty}</td>
+          <td style="padding:6px 0;text-align:right;color:#111827">${money(i.price * i.qty)}</td>
+        </tr>`
+    )
+    .join("");
+  await sendMail({
+    to: setup.config.fromEmail,
+    subject: `🛒 New order #${order.orderId.slice(0, 8).toUpperCase()} received — ${setup.storeName}`,
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:24px">
+        <h2 style="color:#111827;margin:0 0 14px">New order received! 🎉</h2>
+        <div style="background:#EEF2FF;border:1px solid #C7D2FE;border-radius:14px;padding:14px 18px;margin-bottom:18px;font-size:14px">
+          <div><strong>Customer:</strong> ${escapeHtml(order.customerName || "—")}</div>
+          <div><strong>Phone:</strong> ${escapeHtml(order.customerPhone || "—")}</div>
+          <div><strong>Email:</strong> ${escapeHtml(order.customerEmail || "—")}</div>
+          <div><strong>Payment:</strong> ${escapeHtml(order.paymentMethod)}</div>
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:14px;border-top:1px solid #E5E7EB">
+          ${rows}
+        </table>
+        <div style="border-top:1px solid #E5E7EB;margin-top:8px;padding-top:10px;font-size:14px">
+          <div style="display:flex;justify-content:space-between"><span style="color:#6B7280">Subtotal</span><strong>${money(order.subtotal)}</strong></div>
+          ${order.discountAmount > 0 ? `<div style="display:flex;justify-content:space-between"><span style="color:#6B7280">Discount</span><strong style="color:#059669">- ${money(order.discountAmount)}</strong></div>` : ""}
+          <div style="display:flex;justify-content:space-between"><span style="color:#6B7280">Shipping</span><strong>${money(order.shippingCharge)}</strong></div>
+          <div style="display:flex;justify-content:space-between;font-size:16px;margin-top:6px"><span>Total</span><strong>${money(order.totalAmount)}</strong></div>
+        </div>
+        <p style="color:#6B7280;font-size:13px;margin:20px 0 0">Confirm, pack and mark the order as shipped from your admin panel.</p>
+      </div>`,
+  });
+}
+
 export async function sendOrderStatusEmail(order: {
   orderId: string;
   customerEmail: string;
