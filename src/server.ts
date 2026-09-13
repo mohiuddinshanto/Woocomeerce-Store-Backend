@@ -51,7 +51,7 @@ const onboardingSchema = z.object({
   }),
 });
 
-const defaultFeatureFlags = { reviews: true, wishlist: true, coupons: true, cod: true, addToCart: true, checkoutEmail: false };
+const defaultFeatureFlags = { reviews: true, wishlist: true, coupons: true, cod: true, addToCart: true, checkoutEmail: false, bottomNav: true };
 
 const defaultCheckoutForm = {
   name: { enabled: true, required: true, label: "Full name", placeholder: "Rahim Ahmed" },
@@ -1236,7 +1236,7 @@ app.patch("/api/admin/config", requireAuth, requireRole("ADMIN"), async (req, re
       storeName: z.string().min(2).max(100).optional(),
       logoUrl: z.string().url().optional(),
       themeSettings: z.unknown().optional(),
-      featureFlags: z.object({ reviews: z.boolean().optional(), wishlist: z.boolean().optional(), coupons: z.boolean().optional(), cod: z.boolean().optional(), addToCart: z.boolean().optional(), checkoutEmail: z.boolean().optional() }).optional(),
+      featureFlags: z.object({ reviews: z.boolean().optional(), wishlist: z.boolean().optional(), coupons: z.boolean().optional(), cod: z.boolean().optional(), addToCart: z.boolean().optional(), checkoutEmail: z.boolean().optional(), bottomNav: z.boolean().optional() }).optional(),
       checkoutForm: z.object({
         name: z.object({ enabled: z.boolean().optional(), required: z.boolean().optional(), label: z.string().max(80).optional(), placeholder: z.string().max(120).optional() }).optional(),
         phone: z.object({ enabled: z.boolean().optional(), required: z.boolean().optional(), label: z.string().max(80).optional(), placeholder: z.string().max(120).optional() }).optional(),
