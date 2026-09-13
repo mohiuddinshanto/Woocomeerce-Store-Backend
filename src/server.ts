@@ -12,7 +12,7 @@ import { makeSessionToken, requireAuth, requireRole } from "./middleware/auth.js
 import { decrypt, encrypt } from "./lib/crypto.js";
 import { uploadImage, deleteImage } from "./lib/storage.js";
 import { baseSkuForParts, generateVariationsForProduct, makeUniqueSku, replaceProductVariations } from "./lib/product-variations.js";
-import { sendNewsletterWelcome, sendOrderConfirmation, sendTestMail } from "./lib/mailer.js";
+import { sendNewsletterWelcome, sendOrderConfirmation, sendOrderStatusEmail, sendTestMail } from "./lib/mailer.js";
 
 const app = express();
 app.set("trust proxy", 1);
@@ -599,7 +599,21 @@ app.patch("/api/admin/orders/:id", requireAuth, requireRole("ADMIN", "STAFF"), a
     })
     .safeParse(req.body);
   if (!data.success) return res.status(400).json({ error: "Invalid order update" });
-  res.json(await prisma.order.update({ where: { id: String(req.params.id) }, data: data.data }));
+  const prior = await prisma.order.findUnique({ where: { id: String(req.params.id) }, select: { status: true, shippingDetails: true } });
+  const updated = await prisma.order.update({ where: { id: String(req.params.id) }, data: data.data });
+  if (data.data.status && prior && prior.status !== data.data.status) {
+    const details = (prior.shippingDetails as Record<string, unknown>) ?? {};
+    const email = String(details.email ?? "").trim();
+    if (email) {
+      sendOrderStatusEmail({
+        orderId: updated.id,
+        customerEmail: email,
+        customerName: String(details.name ?? details.fullname ?? ""),
+        status: data.data.status,
+      }).catch((err) => console.error("order status mail failed:", err.message));
+    }
+  }
+  res.json(updated);
 });
 
 app.post("/api/admin/orders/:id/send-steadfast", requireAuth, requireRole("ADMIN", "STAFF"), async (req, res) => {

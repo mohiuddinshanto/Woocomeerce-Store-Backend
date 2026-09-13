@@ -90,6 +90,30 @@ export async function sendOrderConfirmation(order: {
   });
 }
 
+export async function sendOrderStatusEmail(order: {
+  orderId: string;
+  customerEmail: string;
+  customerName: string;
+  status: string;
+}): Promise<void> {
+  const setup = await getSmtp();
+  if (!setup) return;
+  await sendMail({
+    to: order.customerEmail,
+    subject: `Update on order #${order.orderId.slice(0, 8).toUpperCase()} — ${escapeHtml(order.status)}`,
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:24px">
+        <h2 style="color:#111827;margin:0 0 8px">Hi ${escapeHtml(order.customerName || "there")},</h2>
+        <p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">Your order <strong>#${escapeHtml(order.orderId.slice(0, 8).toUpperCase())}</strong> at <strong>${escapeHtml(setup.storeName)}</strong> has a new update:</p>
+        <div style="background:#EEF2FF;border:1px solid #C7D2FE;border-radius:14px;padding:18px 22px;text-align:center;margin-bottom:20px">
+          <div style="font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:#6366F1;margin-bottom:6px">Order Status</div>
+          <div style="font-size:20px;font-weight:800;color:#4338CA">${escapeHtml(order.status)}</div>
+        </div>
+        <p style="color:#6B7280;font-size:13px;line-height:1.6;margin:0">You can track the full journey of your order anytime from your profile. Thank you for shopping with us!</p>
+      </div>`,
+  });
+}
+
 export async function sendTestMail(to: string): Promise<void> {
   const setup = await getSmtp();
   if (!setup) {
