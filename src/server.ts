@@ -52,6 +52,15 @@ const onboardingSchema = z.object({
 });
 
 const defaultFeatureFlags = { reviews: true, wishlist: true, coupons: true, cod: true, addToCart: true, checkoutEmail: false };
+
+const defaultCheckoutForm = {
+  name: { enabled: true, required: true, label: "Full name", placeholder: "Rahim Ahmed" },
+  phone: { enabled: true, required: true, label: "Mobile number", placeholder: "01712345678" },
+  email: { enabled: false, required: false, label: "Email address (optional)", placeholder: "you@example.com" },
+  address: { enabled: true, required: true, label: "Delivery address", placeholder: "House 12, Road 5, Block B" },
+  district: { enabled: true, required: true, label: "District", placeholder: "Dhaka" },
+  division: { enabled: true, required: true, label: "Division", placeholder: "Dhaka" },
+};
 const gatewayBase = {
   enabled: z.boolean(),
   mode: z.enum(["sandbox", "live"]).optional(),
@@ -153,7 +162,7 @@ app.post("/api/newsletter/subscribe", async (req, res) => {
 app.get("/api/store/checkout-options", async (_req, res) => {
   const config = await prisma.storeConfig.findUnique({
     where: { id: "store-config-singleton" },
-    select: { featureFlags: true, paymentConfig: true },
+    select: { featureFlags: true, paymentConfig: true, checkoutForm: true },
   });
   const flags = { ...defaultFeatureFlags, ...((config?.featureFlags as Record<string, boolean> | null) ?? {}) };
   const encrypted = config?.paymentConfig as { encrypted?: string } | null;
@@ -164,7 +173,12 @@ app.get("/api/store/checkout-options", async (_req, res) => {
     ...(payments.nagad?.enabled ? [{ id: "Nagad", label: "Nagad" }] : []),
     ...(payments.sslcommerz?.enabled ? [{ id: "SSLCommerz", label: "Card / Mobile Banking" }] : []),
   ];
-  res.json({ methods, codEnabled: flags.cod, requiresEmail: flags.checkoutEmail === true });
+  const saved = (config?.checkoutForm as Record<string, Record<string, unknown>> | null) ?? {};
+  const form = Object.fromEntries(
+    Object.keys(defaultCheckoutForm).map((key) => [key, { ...defaultCheckoutForm[key as keyof typeof defaultCheckoutForm], ...(saved[key] ?? {}) }]),
+  );
+  const emailEnabled = Boolean((form as Record<string, { enabled?: boolean }>).email?.enabled);
+  res.json({ methods, codEnabled: flags.cod, requiresEmail: flags.checkoutEmail === true || emailEnabled, form });
 });
 
 app.get("/api/categories", async (_req, res) => {
@@ -1197,6 +1211,14 @@ app.patch("/api/admin/config", requireAuth, requireRole("ADMIN"), async (req, re
       logoUrl: z.string().url().optional(),
       themeSettings: z.unknown().optional(),
       featureFlags: z.object({ reviews: z.boolean().optional(), wishlist: z.boolean().optional(), coupons: z.boolean().optional(), cod: z.boolean().optional(), addToCart: z.boolean().optional(), checkoutEmail: z.boolean().optional() }).optional(),
+      checkoutForm: z.object({
+        name: z.object({ enabled: z.boolean().optional(), required: z.boolean().optional(), label: z.string().max(80).optional(), placeholder: z.string().max(120).optional() }).optional(),
+        phone: z.object({ enabled: z.boolean().optional(), required: z.boolean().optional(), label: z.string().max(80).optional(), placeholder: z.string().max(120).optional() }).optional(),
+        email: z.object({ enabled: z.boolean().optional(), required: z.boolean().optional(), label: z.string().max(80).optional(), placeholder: z.string().max(120).optional() }).optional(),
+        address: z.object({ enabled: z.boolean().optional(), required: z.boolean().optional(), label: z.string().max(80).optional(), placeholder: z.string().max(120).optional() }).optional(),
+        district: z.object({ enabled: z.boolean().optional(), required: z.boolean().optional(), label: z.string().max(80).optional(), placeholder: z.string().max(120).optional() }).optional(),
+        division: z.object({ enabled: z.boolean().optional(), required: z.boolean().optional(), label: z.string().max(80).optional(), placeholder: z.string().max(120).optional() }).optional(),
+      }).optional(),
       marketingPixels: z.unknown().optional(),
       chatConfig: z.unknown().optional(),
       homePageConfig: z

@@ -144,6 +144,7 @@ model StoreConfig {
   emailConfig Json?
   courierConfig Json?
   storageConfig Json?
+  checkoutForm Json?
   updatedAt DateTime @updatedAt
 }
 
