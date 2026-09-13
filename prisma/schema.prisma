@@ -21,12 +21,10 @@ enum StaffType {
 enum OrderStatus {
   PENDING
   CONFIRMED
-  PACKED
-  SENT
+  IN_COURIER
   SHIPPED
   DELIVERED
   CANCELLED
-  RETURNED
 }
 
 enum PaymentStatus {

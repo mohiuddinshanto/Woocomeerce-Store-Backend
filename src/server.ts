@@ -604,7 +604,7 @@ app.get("/api/admin/orders", requireAuth, requireRole("ADMIN", "STAFF"), restric
 app.patch("/api/admin/orders/:id", requireAuth, requireRole("ADMIN", "STAFF"), async (req, res) => {
   const data = z
     .object({
-      status: z.enum(["PENDING", "CONFIRMED", "PACKED", "SENT", "SHIPPED", "DELIVERED", "CANCELLED", "RETURNED"]).optional(),
+      status: z.enum(["PENDING", "CONFIRMED", "IN_COURIER", "SHIPPED", "DELIVERED", "CANCELLED"]).optional(),
       paymentStatus: z.enum(["UNPAID", "PAID", "FAILED", "REFUNDED"]).optional(),
       courierName: z.string().max(100).nullable().optional(),
       courierTrackingId: z.string().max(200).nullable().optional(),
@@ -687,7 +687,7 @@ app.post("/api/admin/orders/:id/send-steadfast", requireAuth, requireRole("ADMIN
   const updated = await prisma.order.update({
     where: { id: order.id },
     data: {
-      status: "SENT",
+      status: "IN_COURIER",
       courierName: "Steadfast",
       courierTrackingId: tracking,
       shippingDetails: { ...sd, sfConsignmentId: body.consignment.consignment_id != null ? String(body.consignment.consignment_id) : undefined, sfTrackingCode: tracking || undefined } as Prisma.InputJsonValue,

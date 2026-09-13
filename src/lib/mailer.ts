@@ -128,50 +128,39 @@ function orderBox(orderId: string, detailsBlock: string) {
 export const ORDER_STATUS_LABELS: Record<string, string> = {
   PENDING: "Pending",
   CONFIRMED: "Confirmed",
-  PACKED: "Packed",
-  SENT: "Sent to courier",
+  IN_COURIER: "In Courier",
   SHIPPED: "Shipped",
   DELIVERED: "Delivered",
   CANCELLED: "Cancelled",
-  RETURNED: "Returned",
 };
 
 export const ORDER_STATUS_MESSAGES: Record<string, string> = {
   PENDING: "Great news — we received your order! It is now pending confirmation and our team will reach out soon.",
   CONFIRMED: "Your order is confirmed! Our team has verified it and we are preparing everything for you.",
-  PACKED: "Your order has been carefully packed and is ready to go out for delivery.",
-  SENT: "Your order has been handed over to the courier. It is now on the way to you!",
+  IN_COURIER: "Your order has been handed over to the courier. It is now on the way to you!",
   SHIPPED: "Your order is out for delivery. Get ready, it will arrive very soon!",
   DELIVERED: "Your order has been delivered. We hope you love it — thank you for shopping with us!",
   CANCELLED: "Your order has been cancelled. Refunds (if any) are processed within a few days.",
-  RETURNED: "Your return has been received. The refund will be processed shortly.",
 };
 
-const JOURNEY = ["PENDING", "CONFIRMED", "PACKED", "SENT", "SHIPPED", "DELIVERED"];
+const JOURNEY = ["PENDING", "CONFIRMED", "IN_COURIER", "SHIPPED", "DELIVERED"];
 
 function journey(st: string, primary: string) {
   const idx = JOURNEY.indexOf(st);
   const steps = JOURNEY.map((s, i) => (i <= idx ? primary : "#e2e8f0"));
-  const cells = steps
-    .map(
-      (color, i) => `
-      <td width="12%" height="10" style="border-radius:3px;background-color:${color};"></td>`
-    )
-    .join("");
   return `
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:24px 0 6px;">
       <tr>
-        <td width="12%" style="padding-right:3px;height:6px;border-radius:3px;background-color:${steps[0]};"></td>
-        <td width="12%" style="padding:0 3px;height:6px;border-radius:3px;background-color:${steps[1]};"></td>
-        <td width="12%" style="padding:0 3px;height:6px;border-radius:3px;background-color:${steps[2]};"></td>
-        <td width="12%" style="padding:0 3px;height:6px;border-radius:3px;background-color:${steps[3]};"></td>
-        <td width="12%" style="padding:0 3px;height:6px;border-radius:3px;background-color:${steps[4]};"></td>
-        <td width="12%" style="padding-left:3px;height:6px;border-radius:3px;background-color:${steps[5]};"></td>
+        <td width="20%" style="padding-right:3px;height:6px;border-radius:3px;background-color:${steps[0]};"></td>
+        <td width="20%" style="padding:0 3px;height:6px;border-radius:3px;background-color:${steps[1]};"></td>
+        <td width="20%" style="padding:0 3px;height:6px;border-radius:3px;background-color:${steps[2]};"></td>
+        <td width="20%" style="padding:0 3px;height:6px;border-radius:3px;background-color:${steps[3]};"></td>
+        <td width="20%" style="padding-left:3px;height:6px;border-radius:3px;background-color:${steps[4]};"></td>
       </tr>
     </table>
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:6px;">
       <tr>
-        ${JOURNEY.map((s, i) => `<td align="center" width="12%" style="font-size:9px;letter-spacing:.4px;color:${i <= idx ? "#334155" : "#cbd5e1"};text-transform:uppercase;font-weight:${i <= idx ? "700" : "500"};">${(s === "SENT" ? "Sent" : s === "DELIVERED" ? "Delivered" : s[0] + s.slice(1).toLowerCase())}</td>`).join("")}
+        ${JOURNEY.map((s, i) => `<td align="center" width="20%" style="font-size:9px;letter-spacing:.4px;color:${i <= idx ? "#334155" : "#cbd5e1"};text-transform:uppercase;font-weight:${i <= idx ? "700" : "500"};">${ORDER_STATUS_LABELS[s] ?? s}</td>`).join("")}
       </tr>
     </table>`;
 }
