@@ -12,6 +12,7 @@ import { makeSessionToken, requireAuth, requireRole } from "./middleware/auth.js
 import { decrypt, encrypt } from "./lib/crypto.js";
 import { uploadImage, deleteImage } from "./lib/storage.js";
 import { baseSkuForParts, generateVariationsForProduct, makeUniqueSku, replaceProductVariations } from "./lib/product-variations.js";
+import { sendNewsletterWelcome, sendOrderConfirmation, sendTestMail } from "./lib/mailer.js";
 
 const app = express();
 app.set("trust proxy", 1);
@@ -50,7 +51,7 @@ const onboardingSchema = z.object({
   }),
 });
 
-const defaultFeatureFlags = { reviews: true, wishlist: true, coupons: true, cod: true, addToCart: true };
+const defaultFeatureFlags = { reviews: true, wishlist: true, coupons: true, cod: true, addToCart: true, checkoutEmail: false };
 const gatewayBase = {
   enabled: z.boolean(),
   mode: z.enum(["sandbox", "live"]).optional(),
@@ -142,6 +143,7 @@ app.post("/api/newsletter/subscribe", async (req, res) => {
       create: { email },
       update: {},
     });
+    sendNewsletterWelcome(email).catch((err) => console.error("newsletter welcome mail failed:", err.message));
     res.json({ ok: true });
   } catch {
     res.status(500).json({ error: "Could not save subscription" });
@@ -162,7 +164,7 @@ app.get("/api/store/checkout-options", async (_req, res) => {
     ...(payments.nagad?.enabled ? [{ id: "Nagad", label: "Nagad" }] : []),
     ...(payments.sslcommerz?.enabled ? [{ id: "SSLCommerz", label: "Card / Mobile Banking" }] : []),
   ];
-  res.json({ methods, codEnabled: flags.cod });
+  res.json({ methods, codEnabled: flags.cod, requiresEmail: flags.checkoutEmail === true });
 });
 
 app.get("/api/categories", async (_req, res) => {
@@ -436,6 +438,22 @@ app.post("/api/orders", checkIpCooldown, async (req, res) => {
 
   if (parsed.data.couponId) {
     await prisma.coupon.update({ where: { id: parsed.data.couponId }, data: { usedCount: { increment: 1 } } }).catch(() => {});
+  }
+
+  const customerEmail = String((parsed.data.shippingDetails as Record<string, unknown>)?.email ?? "").trim();
+  if (customerEmail) {
+    const details = (parsed.data.shippingDetails as Record<string, unknown>) ?? {};
+    sendOrderConfirmation({
+      orderId: order.id,
+      customerEmail,
+      customerName: String(details.name ?? details.fullname ?? ""),
+      items: parsed.data.orderItems.map((i) => ({ name: i.name, qty: i.qty, price: i.price })),
+      subtotal: parsed.data.subtotal,
+      shippingCharge: parsed.data.shippingCharge,
+      discountAmount: parsed.data.discountAmount ?? 0,
+      totalAmount: parsed.data.totalAmount,
+      paymentMethod: parsed.data.paymentMethod,
+    }).catch((err) => console.error("order confirmation mail failed:", err.message));
   }
 
   res.status(201).json(order);
@@ -1178,7 +1196,7 @@ app.patch("/api/admin/config", requireAuth, requireRole("ADMIN"), async (req, re
       storeName: z.string().min(2).max(100).optional(),
       logoUrl: z.string().url().optional(),
       themeSettings: z.unknown().optional(),
-      featureFlags: z.object({ reviews: z.boolean().optional(), wishlist: z.boolean().optional(), coupons: z.boolean().optional(), cod: z.boolean().optional(), addToCart: z.boolean().optional() }).optional(),
+      featureFlags: z.object({ reviews: z.boolean().optional(), wishlist: z.boolean().optional(), coupons: z.boolean().optional(), cod: z.boolean().optional(), addToCart: z.boolean().optional(), checkoutEmail: z.boolean().optional() }).optional(),
       marketingPixels: z.unknown().optional(),
       chatConfig: z.unknown().optional(),
       homePageConfig: z
@@ -1480,6 +1498,17 @@ app.get("/api/admin/config", requireAuth, requireRole("ADMIN"), async (_req, res
     storageConfigured: Boolean(config.storageConfig),
     aiConfigured: Boolean(config.aiConfig),
   });
+});
+
+app.post("/api/admin/test-email", requireAuth, requireRole("ADMIN"), async (req, res) => {
+  const parsed = z.object({ to: z.string().email().max(200) }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Invalid recipient email" });
+  try {
+    await sendTestMail(parsed.data.to);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : "Could not send test email" });
+  }
 });
 
 app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
