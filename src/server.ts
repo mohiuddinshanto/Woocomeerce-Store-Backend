@@ -1265,6 +1265,7 @@ app.patch("/api/admin/config", requireAuth, requireRole("ADMIN"), async (req, re
                 .array(
                   z.object({
                     init: z.string().max(5).optional(),
+                    image: z.string().max(500).nullable().optional(),
                     name: z.string().max(100).optional(),
                     role: z.string().max(150).optional(),
                     quote: z.string().max(500).optional(),
