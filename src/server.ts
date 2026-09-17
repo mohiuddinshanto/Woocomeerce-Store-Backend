@@ -594,7 +594,12 @@ app.delete("/api/admin/products/:id", requireAuth, requireRole("ADMIN"), async (
 });
 
 app.get("/api/admin/categories", requireAuth, requireRole("ADMIN", "STAFF"), async (_req, res) =>
-  res.json(await prisma.category.findMany({ include: { subCategories: { orderBy: { name: "asc" } } }, orderBy: { name: "asc" } }))
+  res.json(
+    await prisma.category.findMany({
+      include: { _count: { select: { products: true } }, subCategories: { orderBy: { name: "asc" }, include: { _count: { select: { products: true } } } } },
+      orderBy: { name: "asc" },
+    })
+  )
 );
 
 app.get("/api/admin/orders", requireAuth, requireRole("ADMIN", "STAFF"), restrictStaffOrderView, async (_req, res) => {
@@ -819,9 +824,21 @@ app.patch("/api/admin/categories/:id", requireAuth, requireRole("ADMIN"), async 
 
 app.delete("/api/admin/categories/:id", requireAuth, requireRole("ADMIN"), async (req, res) => {
   const id = String(req.params.id);
+  const body = (req.body && typeof req.body === "object" ? req.body : {}) as Record<string, unknown>;
+  const moveTo = typeof body.moveToCategoryId === "string" && body.moveToCategoryId.trim() ? body.moveToCategoryId.trim() : null;
+  if (moveTo && moveTo === id) return res.status(400).json({ error: "Cannot move products to the same category" });
   const count = await prisma.product.count({ where: { categoryId: id } });
-  if (count > 0) return res.status(400).json({ error: "Cannot delete: products exist in this category" });
   const children = await prisma.category.count({ where: { parentId: id } });
+  if (count > 0) {
+    if (!moveTo) return res.status(400).json({ error: "Cannot delete: products exist in this category" });
+    const target = await prisma.category.findUnique({ where: { id: moveTo } });
+    if (!target) return res.status(400).json({ error: "Destination category not found" });
+    await prisma.$transaction([
+      prisma.product.updateMany({ where: { categoryId: id }, data: { categoryId: moveTo } }),
+      prisma.category.delete({ where: { id } }),
+    ]);
+    return res.status(204).end();
+  }
   if (children > 0) return res.status(400).json({ error: "Cannot delete: this category has sub-categories" });
   await prisma.category.delete({ where: { id } });
   res.status(204).end();
